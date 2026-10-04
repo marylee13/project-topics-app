@@ -9,7 +9,7 @@ import shutil
 # ==================== НАСТРОЙКИ ====================
 DB_PATH = "data/projects.db"
 UPLOAD_DIR = Path("uploads")
-TEACHER_PASSWORD = "teacher2026"  # Смените пароль!
+TEACHER_PASSWORD = "marylee_13"
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 Path("data").mkdir(exist_ok=True)
@@ -506,7 +506,3 @@ else:
             statuses[s["status"]] = statuses.get(s["status"], 0) + 1
         for k, v in statuses.items():
             st.write(f"- {k}: {v}")
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Пароль учителя по умолчанию: teacher2026")
-st.sidebar.caption("Смените его в коде (переменная TEACHER_PASSWORD)")
