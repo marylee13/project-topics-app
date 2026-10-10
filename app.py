@@ -4,13 +4,12 @@ from logic import (
     delete_topic, update_topic, add_topic, add_topics_bulk,
     get_materials, add_material, delete_material,
     submit_work, get_submissions, update_submission_status, get_student_submissions,
-    get_action_log, topics_to_csv, submissions_to_csv, TEACHER_PASSWORD,
+    get_action_log, topics_to_csv, submissions_to_csv, TEACHER_PASSWORD, log_action,
 )
 from datetime import datetime
 import csv
 import io
 
-# ==================== UI ====================
 st.set_page_config(page_title="Темы проектов", page_icon="📚", layout="wide")
 
 if "gcp_service_account" not in st.secrets or "SPREADSHEET_ID" not in st.secrets or "DRIVE_FOLDER_ID" not in st.secrets:
@@ -22,18 +21,26 @@ init_sheets()
 st.sidebar.title("📚 Темы проектов")
 role = st.sidebar.radio("Кто вы?", ["Ученик", "Учитель"])
 
-# -------------------- УЧЕНИК --------------------
 if role == "Ученик":
     st.title("Бронирование темы проекта")
 
-    with st.expander("ℹ️ Как пользоваться (краткая инструкция)", expanded=False):
+    with st.expander("ℹ️ Как пользоваться (краткая инструкция)", expanded=True):
         st.markdown("""
-1. Введите **ФИО** и класс внизу блока «Выбрать тему».
-2. Выберите класс и найдите свободную тему.
-3. Нажмите **Забронировать** (можно только **одну** тему).
+**Как выбрать тему**
+- Опирайтесь на **рекомендацию учителя**, свои **интересы** и результаты **икигай**
+  (что вам нравится, что получается, в чём польза для других и что может быть ценным).
+- Тема должна быть вам интересна и по силам — так проект получится осмысленнее.
+
+**Как работать в сервисе**
+1. Введите **ФИО** и класс.
+2. Выберите класс и найдите свободную тему (можно воспользоваться поиском).
+3. Нажмите **Забронировать** (можно только **одну** тему на ученика).
 4. На вкладке «Сдать работу» загрузите файл проекта.
 5. На вкладке «Мой кабинет» смотрите статус и комментарии учителя.
-6. Материалы от учителя (лекции, карточки) — в блоке ниже.
+6. Материалы от учителя (лекции, карточки) — в блоке на этой странице.
+
+Если не получается забронировать тему самостоятельно — обратитесь к учителю:
+он может **забронировать тему за вас**.
         """)
 
     materials = get_materials()
@@ -156,7 +163,6 @@ if role == "Ученик":
                         if s["status"] == "на доработке":
                             st.warning("Доработайте и сдайте снова на вкладке «Сдать работу».")
 
-# -------------------- УЧИТЕЛЬ --------------------
 else:
     st.title("Панель учителя")
 
@@ -218,6 +224,39 @@ else:
                             st.rerun()
 
     with tab_t2:
+        st.subheader("Забронировать тему за ученика")
+        st.caption("Если ученик не может забронировать сам — укажите ФИО и свободную тему. Учитывайте рекомендацию, интересы и икигай ученика.")
+        free_topics = get_topics(only_free=True)
+        if not free_topics:
+            st.info("Сейчас нет свободных тем для бронирования.")
+        else:
+            with st.form("teacher_book_form"):
+                tb_name = st.text_input("ФИО ученика")
+                tb_class = st.text_input("Класс ученика (например, 8А)")
+                options = {
+                    f"{t['grade']} кл. | {t['subject']} — {t['title']}": t["id"]
+                    for t in free_topics
+                }
+                tb_label = st.selectbox("Свободная тема", list(options.keys()))
+                tb_note = st.text_input("Комментарий / рекомендация (необязательно)", placeholder="Почему эта тема подходит ученику")
+                if st.form_submit_button("Забронировать за ученика", type="primary"):
+                    if not tb_name.strip():
+                        st.error("Укажите ФИО ученика")
+                    else:
+                        ok, msg = book_topic(options[tb_label], tb_name.strip())
+                        if ok:
+                            if tb_note.strip():
+                                log_action(
+                                    "учитель",
+                                    "рекомендация + бронь",
+                                    f"{tb_name.strip()} ({tb_class}): {tb_note.strip()}",
+                                )
+                            st.success(f"{msg} Ученик: {tb_name.strip()}")
+                            st.rerun()
+                        else:
+                            st.error(msg)
+
+        st.divider()
         st.subheader("Управление темами")
         c1, c2 = st.columns(2)
         with c1:
