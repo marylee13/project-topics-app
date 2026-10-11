@@ -86,7 +86,7 @@ if role == "Ученик":
 
     with st.expander("ℹ️ Как пользоваться", expanded=False):
         st.markdown("""
-1. ФИО и класс → забронируйте одну тему.
+1. ФИО и класс → забронируйте одну тему (🟢 свободно, 🔴 занята).
 2. Сдайте файл (можно пересдать — старая версия сохранится).
 3. В кабинете смотрите статус и историю.
         """)
@@ -102,8 +102,8 @@ if role == "Ученик":
     tab1, tab2, tab3 = st.tabs(["1. Выбрать тему", "2. Сдать работу", "3. Мой кабинет"])
 
     with tab1:
-        st.subheader("Свободные темы")
-        st.caption("Темы общие для 8А–8Е.")
+        st.subheader("Список тем")
+        st.caption("🟢 свободно · 🔴 занята · темы общие для 8А–8Е")
         col_s, col_r = st.columns([4, 1])
         with col_s:
             search_q = st.text_input("Поиск", placeholder="тема или предмет")
@@ -112,46 +112,59 @@ if role == "Ученик":
             if st.button("🔄 Обновить", key="refresh_topics"):
                 get_topics_cached.clear()
                 st.rerun()
+
         all_for_count = get_topics_cached()
         free_count = sum(1 for t in all_for_count if t["is_booked"] != 1)
-        st.caption(f"В базе: **{len(all_for_count)}** · свободно: **{free_count}** · занято: **{len(all_for_count)-free_count}**")
-        topics = get_topics(only_free=True, search=search_q or None)
+        st.caption(f"В базе: **{len(all_for_count)}** · 🟢 свободно: **{free_count}** · 🔴 занято: **{len(all_for_count) - free_count}**")
+
+        topics = get_topics(only_free=False, search=search_q or None)
+
         if not topics:
             if not all_for_count:
                 st.warning("Тем пока нет. Учитель добавит их на вкладке «Добавить темы».")
             else:
-                st.info("Свободных тем нет — все забронированы.")
+                st.info("По запросу ничего не найдено.")
         else:
             subjects = {}
             for t in topics:
                 subjects.setdefault(t["subject"] or "Без предмета", []).append(t)
             for subj, items in subjects.items():
-                with st.expander(f"📌 {subj} ({len(items)})", expanded=True):
+                free_in = sum(1 for t in items if t["is_booked"] != 1)
+                with st.expander(f"📌 {subj} (🟢 {free_in} / {len(items)})", expanded=True):
                     for t in items:
+                        is_busy = t["is_booked"] == 1
+                        mark = "🔴" if is_busy else "🟢"
                         c1, c2 = st.columns([4, 1])
                         with c1:
-                            st.markdown(f"**{t['title']}**")
+                            st.markdown(f"{mark} **{t['title']}**")
                             extra = []
-                            if t["product"]:
-                                extra.append(f"Продукт: {t['product']}")
-                            if t["deadline"]:
-                                extra.append(f"Дедлайн: {t['deadline']}")
-                            if extra:
-                                st.caption(" | ".join(extra))
+                            if is_busy:
+                                extra.append(f"Занята: {t['booked_by'] or '—'}")
+                            else:
+                                extra.append("Свободна")
                             if t.get("product"):
+                                extra.append(f"Продукт: {t['product']}")
+                            if t.get("deadline"):
+                                extra.append(f"Дедлайн: {t['deadline']}")
+                            st.caption(" | ".join(extra))
+                            if not is_busy and t.get("product"):
                                 tip = product_tip(t["product"])
                                 if tip:
                                     st.caption(f"💡 {tip}")
                         with c2:
-                            if st.button("Забронировать", key=f"book_{t['id']}"):
-                                if not student_name:
-                                    st.warning("Сначала введите ФИО")
-                                else:
-                                    ok, msg = book_topic(t["id"], student_name)
-                                    if ok:
-                                        st.success(msg); st.rerun()
+                            if is_busy:
+                                st.caption("занята")
+                            else:
+                                if st.button("Забронировать", key=f"book_{t['id']}"):
+                                    if not student_name:
+                                        st.warning("Сначала введите ФИО")
                                     else:
-                                        st.error(msg)
+                                        ok, msg = book_topic(t["id"], student_name)
+                                        if ok:
+                                            st.success(msg)
+                                            st.rerun()
+                                        else:
+                                            st.error(msg)
 
     with tab2:
         st.subheader("Отправка работы")
@@ -181,7 +194,8 @@ if role == "Ученик":
                 if st.button(label, type="primary"):
                     ok, msg = submit_work(booking["id"], name, cls, uploaded)
                     if ok:
-                        st.success(msg); st.rerun()
+                        st.success(msg)
+                        st.rerun()
                     else:
                         st.error(msg)
 
