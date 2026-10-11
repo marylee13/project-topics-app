@@ -135,7 +135,7 @@ def get_next_id(ws):
     ids = []
     for r in records:
         try:
-            ids.append(int(r.get("id", 0)))
+            ids.append(int(float(str(r.get("id", 0)))))
         except (TypeError, ValueError):
             pass
     return max(ids) + 1 if ids else 1
@@ -174,7 +174,7 @@ def add_topic(grade, subject, title, product, deadline=""):
         value_input_option="USER_ENTERED",
     )
     try:
-        log_action("учитель", "добавлена тема", f"id={new_id}, {grade} кл., {subject}: {title}")
+        log_action("учитель", "добавлена тема", f"id={new_id}, {grade}: {subject}: {title}")
     except Exception:
         pass
     get_topics_cached.clear()
@@ -182,7 +182,6 @@ def add_topic(grade, subject, title, product, deadline=""):
 
 
 def add_topics_bulk(rows):
-    """Добавляет много тем пачками — минимум запросов к Google API."""
     prepared = []
     for r in rows:
         title = str(r.get("title", "")).strip()
@@ -190,7 +189,7 @@ def add_topics_bulk(rows):
         if not title or not subject:
             continue
         prepared.append({
-            "grade": str(r.get("grade", "8")).strip() or "8",
+            "grade": str(r.get("grade", "8А")).strip() or "8А",
             "subject": subject,
             "title": title,
             "product": str(r.get("product", "")).strip(),
@@ -206,15 +205,8 @@ def add_topics_bulk(rows):
     batch = []
     for i, r in enumerate(prepared):
         batch.append([
-            start_id + i,
-            r["grade"],
-            r["subject"],
-            r["title"],
-            r["product"],
-            0,
-            "",
-            "",
-            r["deadline"],
+            start_id + i, r["grade"], r["subject"], r["title"], r["product"],
+            0, "", "", r["deadline"],
         ])
 
     chunk_size = 50
@@ -240,35 +232,53 @@ def add_topics_bulk(rows):
     return len(batch)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+def _normalize_topic_row(r, row_index):
+    title = str(r.get("title") or r.get("Тема") or r.get("тема") or "").strip()
+    subject = str(r.get("subject") or r.get("Предмет") or r.get("предмет") or "").strip()
+    if not title:
+        return None
+
+    raw_id = r.get("id") or r.get("ID") or ""
+    try:
+        tid = int(float(str(raw_id).strip()))
+    except (TypeError, ValueError):
+        tid = row_index
+    if tid <= 0:
+        tid = row_index
+
+    raw_booked = str(r.get("is_booked", r.get("занята", "")) or "").strip().lower()
+    if raw_booked in ("1", "true", "да", "yes", "занята", "booked"):
+        is_booked = 1
+    else:
+        try:
+            is_booked = 1 if int(float(raw_booked)) == 1 else 0
+        except (TypeError, ValueError):
+            is_booked = 0
+
+    return {
+        "id": tid,
+        "grade": str(r.get("grade") or r.get("Класс") or r.get("класс") or "").strip(),
+        "subject": subject,
+        "title": title,
+        "product": str(r.get("product") or r.get("Продукт") or "").strip(),
+        "is_booked": is_booked,
+        "booked_by": str(r.get("booked_by") or "").strip(),
+        "booked_at": str(r.get("booked_at") or "").strip(),
+        "deadline": str(r.get("deadline") or r.get("Дедлайн") or "").strip(),
+    }
+
+
+@st.cache_data(ttl=20, show_spinner=False)
 def get_topics_cached():
     ss = get_spreadsheet()
     ws = ss.worksheet("topics")
     values = safe_get_all_values(ws)
     records = rows_to_records(values)
     result = []
-    for r in records:
-        try:
-            tid = int(r.get("id", 0))
-        except (TypeError, ValueError):
-            continue
-        if tid <= 0:
-            continue
-        try:
-            is_booked = int(r.get("is_booked", 0) or 0)
-        except (TypeError, ValueError):
-            is_booked = 0
-        result.append({
-            "id": tid,
-            "grade": str(r.get("grade", "")),
-            "subject": str(r.get("subject", "")),
-            "title": str(r.get("title", "")),
-            "product": str(r.get("product", "")),
-            "is_booked": is_booked,
-            "booked_by": str(r.get("booked_by", "") or ""),
-            "booked_at": str(r.get("booked_at", "") or ""),
-            "deadline": str(r.get("deadline", "") or ""),
-        })
+    for i, r in enumerate(records, start=2):
+        item = _normalize_topic_row(r, i)
+        if item:
+            result.append(item)
     return result
 
 
@@ -309,7 +319,7 @@ def book_topic(topic_id, student_name):
         return False, "Тема не найдена"
     vals = ws.row_values(row)
     is_booked = vals[5] if len(vals) > 5 else "0"
-    if str(is_booked) == "1":
+    if str(is_booked).strip() in ("1", "true", "TRUE", "да"):
         return False, "Тема уже занята"
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     ws.update(f"F{row}:H{row}", [[1, student_name, now]], value_input_option="USER_ENTERED")
