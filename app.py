@@ -16,7 +16,18 @@ if "gcp_service_account" not in st.secrets or "SPREADSHEET_ID" not in st.secrets
     st.error("Не настроены Google Secrets. См. README.")
     st.stop()
 
-init_sheets()
+try:
+    init_sheets()
+except Exception as e:
+    err = str(e)
+    if "429" in err or "Quota" in err:
+        st.warning(
+            "⏳ Google временно ограничил число запросов (лимит API). "
+            "Подождите **1–2 минуты** и обновите страницу **один раз**. "
+            "Не нажимайте F5 много раз подряд — от этого лимит только хуже."
+        )
+        st.stop()
+    raise
 
 st.sidebar.title("📚 Темы проектов")
 role = st.sidebar.radio("Кто вы?", ["Ученик", "Учитель"])
@@ -225,7 +236,7 @@ else:
 
     with tab_t2:
         st.subheader("Забронировать тему за ученика")
-        st.caption("Если ученик не может забронировать сам — укажите ФИО и свободную тему. Учитывайте рекомендацию, интересы и икигай ученика.")
+        st.caption("Если ученик не может забронировать сам — укажите ФИО и свободную тему.")
         free_topics = get_topics(only_free=True)
         if not free_topics:
             st.info("Сейчас нет свободных тем для бронирования.")
@@ -238,7 +249,7 @@ else:
                     for t in free_topics
                 }
                 tb_label = st.selectbox("Свободная тема", list(options.keys()))
-                tb_note = st.text_input("Комментарий / рекомендация (необязательно)", placeholder="Почему эта тема подходит ученику")
+                tb_note = st.text_input("Комментарий / рекомендация (необязательно)")
                 if st.form_submit_button("Забронировать за ученика", type="primary"):
                     if not tb_name.strip():
                         st.error("Укажите ФИО ученика")
@@ -246,11 +257,8 @@ else:
                         ok, msg = book_topic(options[tb_label], tb_name.strip())
                         if ok:
                             if tb_note.strip():
-                                log_action(
-                                    "учитель",
-                                    "рекомендация + бронь",
-                                    f"{tb_name.strip()} ({tb_class}): {tb_note.strip()}",
-                                )
+                                log_action("учитель", "рекомендация + бронь",
+                                           f"{tb_name.strip()} ({tb_class}): {tb_note.strip()}")
                             st.success(f"{msg} Ученик: {tb_name.strip()}")
                             st.rerun()
                         else:
@@ -291,7 +299,7 @@ else:
                         es = st.text_input("Предмет", value=t["subject"], key=f"es_{t['id']}")
                         et = st.text_input("Тема", value=t["title"], key=f"et_{t['id']}")
                         ep = st.text_input("Продукт", value=t["product"] or "", key=f"ep_{t['id']}")
-                        ed = st.text_input("Дедлайн (например 15.05.2026)", value=t["deadline"] or "", key=f"ed_{t['id']}")
+                        ed = st.text_input("Дедлайн", value=t["deadline"] or "", key=f"ed_{t['id']}")
                         cs, cd = st.columns(2)
                         with cs:
                             if st.form_submit_button("💾 Сохранить"):
@@ -323,10 +331,10 @@ else:
 
         st.divider()
         st.subheader("Массовое добавление")
-        st.caption("Формат: каждая строка — Класс;Предмет;Тема;Продукт;Дедлайн")
-        st.code("8;Физика;Какие материалы лучше сохраняют тепло;сравнение + рекомендации;20.05.2026", language=None)
+        st.caption("Формат: Класс;Предмет;Тема;Продукт;Дедлайн")
+        st.code("8;Физика;Какие материалы лучше сохраняют тепло;сравнение;20.05.2026", language=None)
         bulk_text = st.text_area("Вставьте строки", height=150)
-        uploaded_csv = st.file_uploader("Или CSV-файл (grade,subject,title,product,deadline)", type=["csv"])
+        uploaded_csv = st.file_uploader("Или CSV", type=["csv"])
 
         if st.button("Загрузить пакет тем"):
             rows = []
@@ -335,9 +343,7 @@ else:
                     parts = [p.strip() for p in line.split(";")]
                     if len(parts) >= 3:
                         rows.append({
-                            "grade": parts[0],
-                            "subject": parts[1],
-                            "title": parts[2],
+                            "grade": parts[0], "subject": parts[1], "title": parts[2],
                             "product": parts[3] if len(parts) > 3 else "",
                             "deadline": parts[4] if len(parts) > 4 else "",
                         })
@@ -357,57 +363,41 @@ else:
                 st.success(f"Добавлено тем: {n}")
                 st.rerun()
             else:
-                st.warning("Нет данных для загрузки")
+                st.warning("Нет данных")
 
     with tab_t4:
         st.subheader("Материалы для учеников")
-        st.caption("Лекции, карточки, доп. материалы — ученики видят их на главной.")
         with st.form("add_mat", clear_on_submit=True):
             mt = st.text_input("Название")
-            md = st.text_input("Описание (необязательно)")
+            md = st.text_input("Описание")
             mf = st.file_uploader("Файл", type=["pdf", "docx", "doc", "pptx", "ppt", "zip", "jpg", "png", "xlsx"])
             if st.form_submit_button("Опубликовать"):
                 if mt.strip() and mf is not None:
                     add_material(mt.strip(), md.strip(), mf)
-                    st.success("Материал опубликован")
+                    st.success("Опубликовано")
                     st.rerun()
                 else:
                     st.error("Укажите название и файл")
-
-        st.divider()
         mats = get_materials()
-        if not mats:
-            st.info("Материалов пока нет.")
-        else:
-            for m in mats:
-                with st.expander(f"📄 {m['title']} ({m['uploaded_at']})"):
-                    st.write(m["description"] or "—")
-                    if m["drive_link"]:
-                        st.markdown(f"[Открыть]({m['drive_link']})")
-                    if st.button("Удалить", key=f"delmat_{m['id']}"):
-                        delete_material(m["id"])
-                        st.rerun()
+        for m in mats:
+            with st.expander(f"📄 {m['title']} ({m['uploaded_at']})"):
+                st.write(m["description"] or "—")
+                if m["drive_link"]:
+                    st.markdown(f"[Открыть]({m['drive_link']})")
+                if st.button("Удалить", key=f"delmat_{m['id']}"):
+                    delete_material(m["id"])
+                    st.rerun()
 
     with tab_t5:
         st.subheader("Экспорт")
         all_topics = get_topics()
         all_subs = get_submissions()
-        st.download_button(
-            "📥 Скачать все темы (CSV)",
-            data=topics_to_csv(all_topics),
-            file_name=f"topics_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-        )
-        st.download_button(
-            "📥 Скачать сдавших / работы (CSV)",
-            data=submissions_to_csv(all_subs),
-            file_name=f"submissions_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-        )
+        st.download_button("📥 Темы (CSV)", data=topics_to_csv(all_topics),
+                           file_name=f"topics_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
+        st.download_button("📥 Работы (CSV)", data=submissions_to_csv(all_subs),
+                           file_name=f"submissions_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
         st.metric("Всего тем", len(all_topics))
         st.metric("Сданных работ", len(all_subs))
-        free = len([t for t in all_topics if t["is_booked"] == 0])
-        st.metric("Свободных тем", free)
 
     with tab_t6:
         st.subheader("Лог действий")
