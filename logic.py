@@ -82,7 +82,6 @@ def get_or_create_worksheet(spreadsheet, title, headers):
 
 @st.cache_resource
 def init_sheets():
-    """Один раз за процесс. Один запрос списка листов вместо 4 отдельных чтений."""
     ss = get_spreadsheet()
     existing_titles = {ws.title for ws in ss.worksheets()}
     for name, headers in HEADERS.items():
@@ -170,26 +169,75 @@ def add_topic(grade, subject, title, product, deadline=""):
     ss = get_spreadsheet()
     ws = ss.worksheet("topics")
     new_id = get_next_id(ws)
-    ws.append_row([new_id, grade, subject, title, product, 0, "", "", deadline or ""], value_input_option="USER_ENTERED")
-    log_action("учитель", "добавлена тема", f"id={new_id}, {grade} кл., {subject}: {title}")
+    ws.append_row(
+        [new_id, grade, subject, title, product, 0, "", "", deadline or ""],
+        value_input_option="USER_ENTERED",
+    )
+    try:
+        log_action("учитель", "добавлена тема", f"id={new_id}, {grade} кл., {subject}: {title}")
+    except Exception:
+        pass
     get_topics_cached.clear()
     return new_id
 
 
 def add_topics_bulk(rows):
-    count = 0
+    """Добавляет много тем пачками — минимум запросов к Google API."""
+    prepared = []
     for r in rows:
-        if r.get("title") and r.get("subject"):
-            add_topic(
-                str(r.get("grade", "8")).strip(),
-                str(r["subject"]).strip(),
-                str(r["title"]).strip(),
-                str(r.get("product", "")).strip(),
-                str(r.get("deadline", "")).strip(),
-            )
-            count += 1
-            time.sleep(0.3)
-    return count
+        title = str(r.get("title", "")).strip()
+        subject = str(r.get("subject", "")).strip()
+        if not title or not subject:
+            continue
+        prepared.append({
+            "grade": str(r.get("grade", "8")).strip() or "8",
+            "subject": subject,
+            "title": title,
+            "product": str(r.get("product", "")).strip(),
+            "deadline": str(r.get("deadline", "")).strip(),
+        })
+    if not prepared:
+        return 0
+
+    ss = get_spreadsheet()
+    ws = ss.worksheet("topics")
+    start_id = get_next_id(ws)
+
+    batch = []
+    for i, r in enumerate(prepared):
+        batch.append([
+            start_id + i,
+            r["grade"],
+            r["subject"],
+            r["title"],
+            r["product"],
+            0,
+            "",
+            "",
+            r["deadline"],
+        ])
+
+    chunk_size = 50
+    for i in range(0, len(batch), chunk_size):
+        chunk = batch[i:i + chunk_size]
+        for attempt in range(5):
+            try:
+                ws.append_rows(chunk, value_input_option="USER_ENTERED")
+                break
+            except Exception as e:
+                if attempt == 4:
+                    raise
+                wait = 20 * (attempt + 1) if ("429" in str(e) or "Quota" in str(e)) else 3 * (attempt + 1)
+                time.sleep(wait)
+        if i + chunk_size < len(batch):
+            time.sleep(3)
+
+    try:
+        log_action("учитель", "массовое добавление тем", f"добавлено: {len(batch)}")
+    except Exception:
+        pass
+    get_topics_cached.clear()
+    return len(batch)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
