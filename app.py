@@ -10,6 +10,8 @@ from datetime import datetime
 import csv
 import io
 
+CLASSES = ["8А", "8Б", "8В", "8Г", "8Д", "8Е"]
+
 st.set_page_config(page_title="Темы проектов", page_icon="📚", layout="wide")
 
 if "gcp_service_account" not in st.secrets or "SPREADSHEET_ID" not in st.secrets or "DRIVE_FOLDER_ID" not in st.secrets:
@@ -43,7 +45,7 @@ if role == "Ученик":
 - Тема должна быть вам интересна и по силам — так проект получится осмысленнее.
 
 **Как работать в сервисе**
-1. Введите **ФИО** и класс.
+1. Введите **ФИО** и класс (8А–8Е).
 2. Выберите класс и найдите свободную тему (можно воспользоваться поиском).
 3. Нажмите **Забронировать** (можно только **одну** тему на ученика).
 4. На вкладке «Сдать работу» загрузите файл проекта.
@@ -71,7 +73,7 @@ if role == "Ученик":
         with col_a:
             student_name = st.text_input("Ваше ФИО (обязательно)", key="student_name")
         with col_b:
-            student_class = st.text_input("Класс (например, 8А)", key="student_class")
+            student_class = st.selectbox("Класс", CLASSES, key="student_class")
 
         if student_name:
             booking = get_student_booking(student_name)
@@ -81,7 +83,7 @@ if role == "Ученик":
             else:
                 st.info("У вас пока нет забронированной темы — выберите ниже.")
 
-        grade = st.selectbox("Класс для списка тем", ["5", "6", "7", "8", "9", "10", "11"], index=3)
+        grade = st.selectbox("Класс для списка тем", CLASSES, index=0)
         search_q = st.text_input("Поиск по темам", placeholder="Введите слово из темы или предмета")
 
         topics = get_topics(grade=grade, only_free=True, search=search_q or None)
@@ -243,9 +245,9 @@ else:
         else:
             with st.form("teacher_book_form"):
                 tb_name = st.text_input("ФИО ученика")
-                tb_class = st.text_input("Класс ученика (например, 8А)")
+                tb_class = st.selectbox("Класс ученика", CLASSES, key="tb_class")
                 options = {
-                    f"{t['grade']} кл. | {t['subject']} — {t['title']}": t["id"]
+                    f"{t['grade']} | {t['subject']} — {t['title']}": t["id"]
                     for t in free_topics
                 }
                 tb_label = st.selectbox("Свободная тема", list(options.keys()))
@@ -268,7 +270,7 @@ else:
         st.subheader("Управление темами")
         c1, c2 = st.columns(2)
         with c1:
-            grade_filter = st.selectbox("Класс", ["Все", "5", "6", "7", "8", "9", "10", "11"], key="gf")
+            grade_filter = st.selectbox("Класс", ["Все"] + CLASSES, key="gf")
         with c2:
             topic_search = st.text_input("Поиск по темам", key="topic_search")
 
@@ -282,7 +284,7 @@ else:
         else:
             for t in topics:
                 status = "🔴 Занята" if t["is_booked"] else "🟢 Свободна"
-                label = f"{status} | {t['grade']} кл. | {t['subject']} — {t['title']}"
+                label = f"{status} | {t['grade']} | {t['subject']} — {t['title']}"
                 with st.expander(label):
                     st.write(f"Продукт: {t['product'] or '—'}")
                     if t["deadline"]:
@@ -293,9 +295,8 @@ else:
                             unbook_topic(t["id"])
                             st.rerun()
                     with st.form(key=f"edit_{t['id']}"):
-                        grades = ["5", "6", "7", "8", "9", "10", "11"]
-                        idx = grades.index(t["grade"]) if t["grade"] in grades else 3
-                        eg = st.selectbox("Класс", grades, index=idx, key=f"eg_{t['id']}")
+                        idx = CLASSES.index(t["grade"]) if t["grade"] in CLASSES else 0
+                        eg = st.selectbox("Класс", CLASSES, index=idx, key=f"eg_{t['id']}")
                         es = st.text_input("Предмет", value=t["subject"], key=f"es_{t['id']}")
                         et = st.text_input("Тема", value=t["title"], key=f"et_{t['id']}")
                         ep = st.text_input("Продукт", value=t["product"] or "", key=f"ep_{t['id']}")
@@ -315,7 +316,7 @@ else:
         with st.form("add_one", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
-                ng = st.selectbox("Класс", ["5", "6", "7", "8", "9", "10", "11"])
+                ng = st.selectbox("Класс", CLASSES)
             with c2:
                 ns = st.text_input("Предмет")
             nt = st.text_input("Тема")
@@ -332,7 +333,7 @@ else:
         st.divider()
         st.subheader("Массовое добавление")
         st.caption("Формат: Класс;Предмет;Тема;Продукт;Дедлайн")
-        st.code("8;Физика;Какие материалы лучше сохраняют тепло;сравнение;20.05.2026", language=None)
+        st.code("8А;Физика;Какие материалы лучше сохраняют тепло;сравнение + рекомендации;20.05.2026", language=None)
         bulk_text = st.text_area("Вставьте строки", height=150)
         uploaded_csv = st.file_uploader("Или CSV", type=["csv"])
 
@@ -352,7 +353,7 @@ else:
                 reader = csv.DictReader(io.StringIO(text))
                 for r in reader:
                     rows.append({
-                        "grade": r.get("grade") or r.get("Класс") or "8",
+                        "grade": r.get("grade") or r.get("Класс") or "8А",
                         "subject": r.get("subject") or r.get("Предмет") or "",
                         "title": r.get("title") or r.get("Тема") or "",
                         "product": r.get("product") or r.get("Продукт") or "",
