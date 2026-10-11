@@ -1,6 +1,6 @@
 import streamlit as st
 from logic import (
-    init_sheets, get_topics, get_student_booking, book_topic, unbook_topic,
+    init_sheets, get_topics, get_topics_cached, get_student_booking, book_topic, unbook_topic,
     delete_topic, update_topic, add_topic, add_topics_bulk,
     get_materials, add_material, delete_material,
     submit_work, get_submissions, update_submission_status, get_student_submissions,
@@ -25,8 +25,7 @@ except Exception as e:
     if "429" in err or "Quota" in err:
         st.warning(
             "⏳ Google временно ограничил число запросов (лимит API). "
-            "Подождите **1–2 минуты** и обновите страницу **один раз**. "
-            "Не нажимайте F5 много раз подряд — от этого лимит только хуже."
+            "Подождите **1–2 минуты** и обновите страницу **один раз**."
         )
         st.stop()
     raise
@@ -37,23 +36,15 @@ role = st.sidebar.radio("Кто вы?", ["Ученик", "Учитель"])
 if role == "Ученик":
     st.title("Бронирование темы проекта")
 
-    with st.expander("ℹ️ Как пользоваться (краткая инструкция)", expanded=True):
+    with st.expander("ℹ️ Как пользоваться", expanded=False):
         st.markdown("""
-**Как выбрать тему**
-- Опирайтесь на **рекомендацию учителя**, свои **интересы** и результаты **икигай**
-  (что вам нравится, что получается, в чём польза для других и что может быть ценным).
-- Тема должна быть вам интересна и по силам — так проект получится осмысленнее.
+**Как выбрать тему:** рекомендация учителя, интересы, икигай.
 
-**Как работать в сервисе**
-1. Введите **ФИО** и класс (8А–8Е).
-2. Найдите свободную тему (темы общие для всех 8 классов).
-3. Нажмите **Забронировать** (можно только **одну** тему на ученика).
-4. На вкладке «Сдать работу» загрузите файл проекта.
-5. На вкладке «Мой кабинет» смотрите статус и комментарии учителя.
-6. Материалы от учителя (лекции, карточки) — в блоке на этой странице.
-
-Если не получается забронировать тему самостоятельно — обратитесь к учителю:
-он может **забронировать тему за вас**.
+1. Введите ФИО и класс (8А–8Е).
+2. Выберите свободную тему (общий список для всех 8 классов).
+3. Забронируйте (одна тема на ученика).
+4. Сдайте работу на вкладке «Сдать работу».
+5. Статус — во вкладке «Мой кабинет».
         """)
 
     materials = get_materials()
@@ -83,19 +74,42 @@ if role == "Ученик":
             else:
                 st.info("У вас пока нет забронированной темы — выберите ниже.")
 
-        st.caption("Темы общие для всех классов 8А–8Е. Ваш класс указывается выше и сохраняется при брони и сдаче работы.")
-        search_q = st.text_input("Поиск по темам", placeholder="Введите слово из темы или предмета")
+        st.caption("Темы общие для 8А–8Е. Класс сохраняется при брони и сдаче.")
+        col_s, col_r = st.columns([4, 1])
+        with col_s:
+            search_q = st.text_input("Поиск по темам", placeholder="слово из темы или предмета")
+        with col_r:
+            st.write("")
+            st.write("")
+            if st.button("🔄 Обновить", key="refresh_topics"):
+                get_topics_cached.clear()
+                st.rerun()
+
+        all_for_count = get_topics_cached()
+        free_count = sum(1 for t in all_for_count if t["is_booked"] != 1)
+        st.caption(f"В базе тем: **{len(all_for_count)}** · свободно: **{free_count}** · занято: **{len(all_for_count) - free_count}**")
 
         topics = get_topics(only_free=True, search=search_q or None)
 
         if not topics:
-            st.info("Сейчас нет свободных тем. Обратитесь к учителю.")
+            if len(all_for_count) == 0:
+                st.warning(
+                    "В таблице пока нет тем (или они не читаются). "
+                    "Учитель добавляет темы во вкладке «Добавить темы». "
+                    "Проверьте лист **topics**: заголовки "
+                    "`id | grade | subject | title | product | is_booked | booked_by | booked_at | deadline`."
+                )
+            else:
+                st.info("Свободных тем нет — все забронированы.")
+                for t in get_topics(only_free=False, search=search_q or None):
+                    if t["is_booked"] == 1:
+                        st.markdown(f"🔒 **{t['title']}** ({t['subject']}) — {t['booked_by'] or 'занята'}")
         else:
             subjects = {}
             for t in topics:
-                subjects.setdefault(t["subject"], []).append(t)
+                subjects.setdefault(t["subject"] or "Без предмета", []).append(t)
             for subj, items in subjects.items():
-                with st.expander(f"📌 {subj} ({len(items)})", expanded=False):
+                with st.expander(f"📌 {subj} ({len(items)})", expanded=True):
                     for t in items:
                         c1, c2 = st.columns([4, 1])
                         with c1:
@@ -134,7 +148,7 @@ if role == "Ученик":
                 if booking["deadline"]:
                     st.caption(f"Дедлайн: {booking['deadline']}")
                 uploaded = st.file_uploader(
-                    "Файл работы (pdf, docx, pptx, zip…)",
+                    "Файл работы",
                     type=["pdf", "docx", "doc", "pptx", "ppt", "zip", "rar", "jpg", "png"],
                 )
                 if st.button("Отправить на проверку", type="primary"):
@@ -154,12 +168,10 @@ if role == "Ученик":
             st.markdown("#### Забронированная тема")
             if booking:
                 st.write(f"**{booking['title']}**")
-                st.caption(f"Предмет: {booking['subject']} | Класс темы: {booking['grade']}"
+                st.caption(f"Предмет: {booking['subject']}"
                            + (f" | Дедлайн: {booking['deadline']}" if booking['deadline'] else ""))
-                st.caption(f"Забронировано: {booking['booked_at']}")
             else:
                 st.info("Тема ещё не выбрана.")
-
             st.markdown("#### Мои работы")
             subs = get_student_submissions(name)
             if not subs:
@@ -168,13 +180,11 @@ if role == "Ученик":
                 for s in subs:
                     color = {"на проверке": "🔵", "на доработке": "🟠", "принято": "🟢"}.get(s["status"], "⚪")
                     with st.expander(f"{color} {s['title']} — {s['status']}"):
-                        st.write(f"Сдано: {s['submitted_at']} | Обновлено: {s['updated_at']}")
+                        st.write(f"Сдано: {s['submitted_at']}")
                         if s["teacher_comment"]:
-                            st.info(f"Комментарий учителя: {s['teacher_comment']}")
+                            st.info(f"Комментарий: {s['teacher_comment']}")
                         if s["drive_link"]:
                             st.markdown(f"[📂 Файл]({s['drive_link']})")
-                        if s["status"] == "на доработке":
-                            st.warning("Доработайте и сдайте снова на вкладке «Сдать работу».")
 
 else:
     st.title("Панель учителя")
@@ -206,21 +216,18 @@ else:
         with c1:
             filter_status = st.selectbox("Статус", ["Все", "на проверке", "на доработке", "принято"])
         with c2:
-            sub_search = st.text_input("Поиск (ФИО, класс, тема)", key="sub_search")
-
+            sub_search = st.text_input("Поиск", key="sub_search")
         if filter_status == "Все":
             subs = get_submissions(search=sub_search or None)
         else:
             subs = get_submissions(status=filter_status, search=sub_search or None)
-
         if not subs:
             st.info("Нет работ.")
         else:
             for s in subs:
                 with st.expander(f"{s['student_name']} ({s['student_class']}) — {s['title']} [{s['status']}]"):
-                    st.write(f"Предмет: {s['subject']} | Сдано: {s['submitted_at']}")
                     if s["drive_link"]:
-                        st.markdown(f"[📥 Открыть работу]({s['drive_link']})")
+                        st.markdown(f"[📥 Открыть]({s['drive_link']})")
                     comment = st.text_area("Комментарий", value=s["teacher_comment"] or "", key=f"comm_{s['id']}")
                     b1, b2, b3 = st.columns(3)
                     with b1:
@@ -238,59 +245,54 @@ else:
 
     with tab_t2:
         st.subheader("Забронировать тему за ученика")
-        st.caption("Если ученик не может забронировать сам — укажите ФИО и свободную тему.")
         free_topics = get_topics(only_free=True)
         if not free_topics:
-            st.info("Сейчас нет свободных тем для бронирования.")
+            st.info("Нет свободных тем.")
         else:
             with st.form("teacher_book_form"):
                 tb_name = st.text_input("ФИО ученика")
-                tb_class = st.selectbox("Класс ученика", CLASSES, key="tb_class")
-                options = {
-                    f"{t['grade']} | {t['subject']} — {t['title']}": t["id"]
-                    for t in free_topics
-                }
-                tb_label = st.selectbox("Свободная тема", list(options.keys()))
-                tb_note = st.text_input("Комментарий / рекомендация (необязательно)")
-                if st.form_submit_button("Забронировать за ученика", type="primary"):
+                tb_class = st.selectbox("Класс", CLASSES, key="tb_class")
+                options = {f"{t['subject']} — {t['title']}": t["id"] for t in free_topics}
+                tb_label = st.selectbox("Тема", list(options.keys()))
+                tb_note = st.text_input("Комментарий (необязательно)")
+                if st.form_submit_button("Забронировать", type="primary"):
                     if not tb_name.strip():
-                        st.error("Укажите ФИО ученика")
+                        st.error("Укажите ФИО")
                     else:
                         ok, msg = book_topic(options[tb_label], tb_name.strip())
                         if ok:
                             if tb_note.strip():
                                 log_action("учитель", "рекомендация + бронь",
                                            f"{tb_name.strip()} ({tb_class}): {tb_note.strip()}")
-                            st.success(f"{msg} Ученик: {tb_name.strip()}")
+                            st.success(msg)
                             st.rerun()
                         else:
                             st.error(msg)
 
         st.divider()
         st.subheader("Управление темами")
+        if st.button("🔄 Обновить список тем"):
+            get_topics_cached.clear()
+            st.rerun()
         c1, c2 = st.columns(2)
         with c1:
             grade_filter = st.selectbox("Класс", ["Все"] + CLASSES, key="gf")
         with c2:
-            topic_search = st.text_input("Поиск по темам", key="topic_search")
-
+            topic_search = st.text_input("Поиск", key="topic_search")
         if grade_filter == "Все":
             topics = get_topics(search=topic_search or None)
         else:
             topics = get_topics(grade=grade_filter, search=topic_search or None)
-
+        st.caption(f"Показано тем: {len(topics)} (всего в базе: {len(get_topics_cached())})")
         if not topics:
-            st.info("Тем нет.")
+            st.info("Тем нет. Добавьте на вкладке «Добавить темы».")
         else:
             for t in topics:
                 status = "🔴 Занята" if t["is_booked"] else "🟢 Свободна"
-                label = f"{status} | {t['grade']} | {t['subject']} — {t['title']}"
-                with st.expander(label):
+                with st.expander(f"{status} | {t['grade']} | {t['subject']} — {t['title']}"):
                     st.write(f"Продукт: {t['product'] or '—'}")
-                    if t["deadline"]:
-                        st.write(f"Дедлайн: {t['deadline']}")
                     if t["is_booked"]:
-                        st.write(f"Забронировал: {t['booked_by']} ({t['booked_at']})")
+                        st.write(f"Забронировал: {t['booked_by']}")
                         if st.button("Снять бронь", key=f"unbook_{t['id']}"):
                             unbook_topic(t["id"])
                             st.rerun()
@@ -321,7 +323,7 @@ else:
                 ns = st.text_input("Предмет")
             nt = st.text_input("Тема")
             np_ = st.text_input("Продукт")
-            nd = st.text_input("Дедлайн (необязательно)", placeholder="15.05.2026")
+            nd = st.text_input("Дедлайн", placeholder="15.05.2026")
             if st.form_submit_button("Добавить", type="primary"):
                 if ns.strip() and nt.strip():
                     add_topic(ng, ns.strip(), nt.strip(), np_.strip(), nd.strip())
@@ -332,11 +334,10 @@ else:
 
         st.divider()
         st.subheader("Массовое добавление")
-        st.caption("Формат: Класс;Предмет;Тема;Продукт;Дедлайн (класс можно указать любой из 8А–8Е — темы видны всем)")
-        st.code("8А;Физика;Какие материалы лучше сохраняют тепло;сравнение + рекомендации;20.05.2026", language=None)
+        st.caption("Формат: Класс;Предмет;Тема;Продукт;Дедлайн")
+        st.code("8А;Физика;Какие материалы лучше сохраняют тепло;сравнение;20.05.2026", language=None)
         bulk_text = st.text_area("Вставьте строки", height=150)
         uploaded_csv = st.file_uploader("Или CSV", type=["csv"])
-
         if st.button("Загрузить пакет тем"):
             rows = []
             if bulk_text.strip():
@@ -367,22 +368,20 @@ else:
                 st.warning("Нет данных")
 
     with tab_t4:
-        st.subheader("Материалы для учеников")
+        st.subheader("Материалы")
         with st.form("add_mat", clear_on_submit=True):
             mt = st.text_input("Название")
             md = st.text_input("Описание")
-            mf = st.file_uploader("Файл", type=["pdf", "docx", "doc", "pptx", "ppt", "zip", "jpg", "png", "xlsx"])
+            mf = st.file_uploader("Файл", type=["pdf", "docx", "pptx", "zip", "jpg", "png", "xlsx"])
             if st.form_submit_button("Опубликовать"):
                 if mt.strip() and mf is not None:
                     add_material(mt.strip(), md.strip(), mf)
                     st.success("Опубликовано")
                     st.rerun()
                 else:
-                    st.error("Укажите название и файл")
-        mats = get_materials()
-        for m in mats:
-            with st.expander(f"📄 {m['title']} ({m['uploaded_at']})"):
-                st.write(m["description"] or "—")
+                    st.error("Название и файл обязательны")
+        for m in get_materials():
+            with st.expander(f"📄 {m['title']}"):
                 if m["drive_link"]:
                     st.markdown(f"[Открыть]({m['drive_link']})")
                 if st.button("Удалить", key=f"delmat_{m['id']}"):
@@ -393,21 +392,17 @@ else:
         st.subheader("Экспорт")
         all_topics = get_topics()
         all_subs = get_submissions()
-        st.download_button("📥 Темы (CSV)", data=topics_to_csv(all_topics),
+        st.download_button("📥 Темы CSV", data=topics_to_csv(all_topics),
                            file_name=f"topics_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
-        st.download_button("📥 Работы (CSV)", data=submissions_to_csv(all_subs),
+        st.download_button("📥 Работы CSV", data=submissions_to_csv(all_subs),
                            file_name=f"submissions_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
-        st.metric("Всего тем", len(all_topics))
-        st.metric("Сданных работ", len(all_subs))
+        st.metric("Тем", len(all_topics))
+        st.metric("Работ", len(all_subs))
 
     with tab_t6:
-        st.subheader("Лог действий")
-        logs = get_action_log(150)
-        if not logs:
-            st.info("Лог пуст.")
-        else:
-            for L in logs:
-                st.text(f"{L['timestamp']} | {L['actor']} | {L['action']} | {L['details']}")
+        st.subheader("Лог")
+        for L in get_action_log(150):
+            st.text(f"{L['timestamp']} | {L['actor']} | {L['action']} | {L['details']}")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Данные хранятся в Google Таблицах и Диске")
+st.sidebar.caption("Данные: Google Таблицы и Диск")
