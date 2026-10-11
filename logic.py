@@ -38,41 +38,57 @@ def get_google_clients():
         st.stop()
 
 
-def get_spreadsheet():
+@st.cache_resource
+def _open_spreadsheet():
+    """Кэшируем объект таблицы — не открываем заново на каждый клик."""
     gc, _ = get_google_clients()
-    return gc.open_by_key(st.secrets["SPREADSHEET_ID"])
+    sheet_id = str(st.secrets["SPREADSHEET_ID"]).strip()
+    last_err = None
+    for attempt in range(4):
+        try:
+            return gc.open_by_key(sheet_id)
+        except Exception as e:
+            last_err = e
+            time.sleep(1.5 * (attempt + 1))
+    raise last_err
+
+
+def get_spreadsheet():
+    try:
+        return _open_spreadsheet()
+    except Exception as e:
+        st.error(
+            "Не удалось открыть Google Таблицу. "
+            "Проверьте: 1) SPREADSHEET_ID в Secrets, "
+            "2) доступ редактора у сервисного аккаунта, "
+            "3) не исчерпана ли квота API (подождите 1–2 минуты)."
+        )
+        st.exception(e)
+        st.stop()
 
 
 def get_drive_folder_id():
-    return st.secrets["DRIVE_FOLDER_ID"]
+    return str(st.secrets["DRIVE_FOLDER_ID"]).strip()
 
 
 def get_or_create_worksheet(spreadsheet, title, headers):
+    """Создаёт лист, если его нет. Заголовки не трогаем на каждый запуск."""
     try:
         ws = spreadsheet.worksheet(title)
-        existing = ws.row_values(1)
-        if not existing:
-            ws.update("A1", [headers])
-        else:
-            need_update = False
-            new_headers = list(existing)
-            for h in headers:
-                if h not in new_headers:
-                    new_headers.append(h)
-                    need_update = True
-            if need_update:
-                ws.update("A1", [new_headers])
+        return ws
     except gspread.WorksheetNotFound:
         ws = spreadsheet.add_worksheet(title=title, rows=2000, cols=max(len(headers), 12))
         ws.update("A1", [headers])
-    return ws
+        return ws
 
 
+@st.cache_resource
 def init_sheets():
+    """Один раз за жизнь процесса: убедиться, что листы существуют."""
     ss = get_spreadsheet()
     for name, headers in HEADERS.items():
         get_or_create_worksheet(ss, name, headers)
-    return ss
+    return True
 
 
 def safe_get_all_values(ws, retries=3):
