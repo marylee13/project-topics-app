@@ -40,16 +40,18 @@ def get_google_clients():
 
 @st.cache_resource
 def _open_spreadsheet():
-    """Кэшируем объект таблицы — не открываем заново на каждый клик."""
     gc, _ = get_google_clients()
     sheet_id = str(st.secrets["SPREADSHEET_ID"]).strip()
     last_err = None
-    for attempt in range(4):
+    for attempt in range(5):
         try:
             return gc.open_by_key(sheet_id)
         except Exception as e:
             last_err = e
-            time.sleep(1.5 * (attempt + 1))
+            wait = 3 * (attempt + 1)
+            if "429" in str(e) or "Quota" in str(e):
+                wait = 15 * (attempt + 1)
+            time.sleep(wait)
     raise last_err
 
 
@@ -59,9 +61,7 @@ def get_spreadsheet():
     except Exception as e:
         st.error(
             "Не удалось открыть Google Таблицу. "
-            "Проверьте: 1) SPREADSHEET_ID в Secrets, "
-            "2) доступ редактора у сервисного аккаунта, "
-            "3) не исчерпана ли квота API (подождите 1–2 минуты)."
+            "Чаще всего это лимит API (429). Подождите 1–2 минуты и обновите страницу один раз."
         )
         st.exception(e)
         st.stop()
@@ -72,10 +72,8 @@ def get_drive_folder_id():
 
 
 def get_or_create_worksheet(spreadsheet, title, headers):
-    """Создаёт лист, если его нет. Заголовки не трогаем на каждый запуск."""
     try:
-        ws = spreadsheet.worksheet(title)
-        return ws
+        return spreadsheet.worksheet(title)
     except gspread.WorksheetNotFound:
         ws = spreadsheet.add_worksheet(title=title, rows=2000, cols=max(len(headers), 12))
         ws.update("A1", [headers])
@@ -84,21 +82,28 @@ def get_or_create_worksheet(spreadsheet, title, headers):
 
 @st.cache_resource
 def init_sheets():
-    """Один раз за жизнь процесса: убедиться, что листы существуют."""
+    """Один раз за процесс. Один запрос списка листов вместо 4 отдельных чтений."""
     ss = get_spreadsheet()
+    existing_titles = {ws.title for ws in ss.worksheets()}
     for name, headers in HEADERS.items():
-        get_or_create_worksheet(ss, name, headers)
+        if name not in existing_titles:
+            ws = ss.add_worksheet(title=name, rows=2000, cols=max(len(headers), 12))
+            ws.update("A1", [headers])
+            time.sleep(0.5)
     return True
 
 
-def safe_get_all_values(ws, retries=3):
+def safe_get_all_values(ws, retries=4):
     last_err = None
     for attempt in range(retries):
         try:
             return ws.get_all_values()
         except Exception as e:
             last_err = e
-            time.sleep(1.5 * (attempt + 1))
+            wait = 2 * (attempt + 1)
+            if "429" in str(e) or "Quota" in str(e):
+                wait = 20 * (attempt + 1)
+            time.sleep(wait)
     raise last_err
 
 
@@ -183,10 +188,11 @@ def add_topics_bulk(rows):
                 str(r.get("deadline", "")).strip(),
             )
             count += 1
+            time.sleep(0.3)
     return count
 
 
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def get_topics_cached():
     ss = get_spreadsheet()
     ws = ss.worksheet("topics")
