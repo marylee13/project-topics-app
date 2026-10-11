@@ -176,7 +176,6 @@ def _cell_is_booked(value, booked_by=""):
             return True
     except (TypeError, ValueError):
         pass
-    # Имя есть, а флаг явно свободный — считаем свободной (после сбоя очистки)
     if booked_by and str(booked_by).strip() and raw not in ("", "0", "false", "нет", "no", "свободна"):
         return True
     return False
@@ -328,31 +327,25 @@ def book_topic(topic_id, student_name):
     student_name = (student_name or "").strip()
     if not student_name:
         return False, "Укажите ФИО"
-
     existing = get_student_booking(student_name)
     if existing:
         return False, f"У вас уже забронирована тема: «{existing['title']}»"
-
     ss = get_spreadsheet()
     ws = ss.worksheet("topics")
     values = safe_get_all_values(ws)
     if not values:
         return False, "Лист topics пуст"
-
     headers = [str(h).strip().lower() for h in values[0]]
-
     def col(*names, default=None):
         for n in names:
             if n in headers:
                 return headers.index(n)
         return default
-
     i_id = col("id", default=0)
     i_title = col("title", "тема", default=3)
     i_booked = col("is_booked", "занята", default=5)
     i_by = col("booked_by", default=6)
     i_at = col("booked_at", default=7)
-
     row_num = None
     for i, row in enumerate(values):
         if i == 0:
@@ -363,7 +356,6 @@ def book_topic(topic_id, student_name):
         if cell_id and _ids_equal(cell_id, topic_id):
             row_num = i + 1
             break
-
     if row_num is None:
         try:
             rid = int(float(str(topic_id).strip()))
@@ -371,22 +363,17 @@ def book_topic(topic_id, student_name):
                 row_num = rid
         except (TypeError, ValueError):
             pass
-
     if row_num is None:
-        return False, f"Тема не найдена (id={topic_id}). Нажмите 🔄 Обновить и попробуйте снова."
-
+        return False, f"Тема не найдена (id={topic_id}). Нажмите 🔄 Обновить."
     row = list(values[row_num - 1])
     while len(row) < 9:
         row.append("")
-
     flag = row[i_booked] if i_booked < len(row) else ""
     by = row[i_by] if i_by < len(row) else ""
     title = row[i_title] if i_title < len(row) else ""
-
     if _cell_is_booked(flag, by):
         who = f" ({by})" if by else ""
-        return False, f"Тема уже занята{who}. Нажмите 🔄 Обновить и выберите другую."
-
+        return False, f"Тема уже занята{who}."
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     if i_by == i_booked + 1 and i_at == i_booked + 2:
         a1 = f"{rowcol_to_a1(row_num, i_booked + 1)}:{rowcol_to_a1(row_num, i_at + 1)}"
@@ -395,20 +382,63 @@ def book_topic(topic_id, student_name):
         ws.update(rowcol_to_a1(row_num, i_booked + 1), [[1]], value_input_option="USER_ENTERED")
         ws.update(rowcol_to_a1(row_num, i_by + 1), [[student_name]], value_input_option="USER_ENTERED")
         ws.update(rowcol_to_a1(row_num, i_at + 1), [[now]], value_input_option="USER_ENTERED")
-
     log_action(student_name, "бронь темы", f"topic_id={topic_id}, title={title}")
     get_topics_cached.clear()
     return True, f"Тема «{title or topic_id}» забронирована!"
 
 
 def unbook_topic(topic_id, actor="учитель"):
+    """Снимает бронь. Возвращает (ok, msg)."""
     ss = get_spreadsheet()
     ws = ss.worksheet("topics")
-    row = find_row_by_id(ws, topic_id)
-    if row:
-        ws.update(f"F{row}:H{row}", [[0, "", ""]], value_input_option="USER_ENTERED")
-        log_action(actor, "снята бронь", f"topic_id={topic_id}")
-        get_topics_cached.clear()
+    values = safe_get_all_values(ws)
+    if not values:
+        return False, "Лист topics пуст"
+    headers = [str(h).strip().lower() for h in values[0]]
+    def col(*names, default=None):
+        for n in names:
+            if n in headers:
+                return headers.index(n)
+        return default
+    i_id = col("id", default=0)
+    i_title = col("title", "тема", default=3)
+    i_booked = col("is_booked", "занята", default=5)
+    i_by = col("booked_by", default=6)
+    i_at = col("booked_at", default=7)
+    row_num = None
+    for i, row in enumerate(values):
+        if i == 0:
+            continue
+        while len(row) < 9:
+            row.append("")
+        cell_id = row[i_id] if i_id < len(row) else ""
+        if cell_id and _ids_equal(cell_id, topic_id):
+            row_num = i + 1
+            break
+    if row_num is None:
+        try:
+            rid = int(float(str(topic_id).strip()))
+            if 2 <= rid <= len(values):
+                row_num = rid
+        except (TypeError, ValueError):
+            pass
+    if row_num is None:
+        return False, f"Тема не найдена (id={topic_id})"
+    row = list(values[row_num - 1])
+    while len(row) < 9:
+        row.append("")
+    title = row[i_title] if i_title < len(row) else ""
+    was_by = row[i_by] if i_by < len(row) else ""
+    if i_by == i_booked + 1 and i_at == i_booked + 2:
+        a1 = f"{rowcol_to_a1(row_num, i_booked + 1)}:{rowcol_to_a1(row_num, i_at + 1)}"
+        ws.update(a1, [[0, "", ""]], value_input_option="USER_ENTERED")
+    else:
+        ws.update(rowcol_to_a1(row_num, i_booked + 1), [[0]], value_input_option="USER_ENTERED")
+        ws.update(rowcol_to_a1(row_num, i_by + 1), [[""]], value_input_option="USER_ENTERED")
+        ws.update(rowcol_to_a1(row_num, i_at + 1), [[""]], value_input_option="USER_ENTERED")
+    log_action(actor, "снята бронь", f"topic_id={topic_id}, title={title}, was={was_by}")
+    get_topics_cached.clear()
+    return True, f"Бронь снята с темы «{title or topic_id}»"
 
 
 def delete_topic(topic_id):
