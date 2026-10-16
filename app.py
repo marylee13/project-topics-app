@@ -155,11 +155,15 @@ if role == "Ученик":
                             if is_busy:
                                 st.caption("занята")
                             else:
-                                if st.button("Забронировать", key=f"book_{t['id']}"):
+                                if st.button("Забронировать", key=f"book_r{t.get('sheet_row', t['id'])}"):
                                     if not student_name:
                                         st.warning("Сначала введите ФИО")
                                     else:
-                                        ok, msg = book_topic(t["id"], student_name)
+                                        ok, msg = book_topic(
+                                            t["id"], student_name,
+                                            sheet_row=t.get("sheet_row"),
+                                            expected_title=t["title"],
+                                        )
                                         if ok:
                                             st.success(msg)
                                             st.rerun()
@@ -308,12 +312,17 @@ else:
             with st.form("teacher_book_form"):
                 tb_name = st.text_input("ФИО")
                 tb_class = st.selectbox("Класс", CLASSES, key="tb_class")
-                options = {f"{t['subject']} — {t['title']}": t["id"] for t in free_topics}
+                options = {f"{t['subject']} — {t['title']}": t for t in free_topics}
                 tb_label = st.selectbox("Тема", list(options.keys()))
                 tb_note = st.text_input("Комментарий")
                 if st.form_submit_button("Забронировать", type="primary"):
                     if tb_name.strip():
-                        ok, msg = book_topic(options[tb_label], tb_name.strip())
+                        tsel = options[tb_label]
+                        ok, msg = book_topic(
+                            tsel["id"], tb_name.strip(),
+                            sheet_row=tsel.get("sheet_row"),
+                            expected_title=tsel["title"],
+                        )
                         if ok:
                             if tb_note.strip():
                                 log_action("учитель", "рекомендация + бронь", f"{tb_name.strip()} ({tb_class}): {tb_note.strip()}")
@@ -331,8 +340,11 @@ else:
         for t in topics:
             status = "🔴" if t["is_booked"] else "🟢"
             with st.expander(f"{status} {t['subject']} — {t['title']}"):
-                if t["is_booked"] and st.button("Снять бронь", key=f"unbook_{t['id']}"):
-                    unbook_topic(t["id"]); st.rerun()
+                if t["is_booked"] and st.button("Снять бронь", key=f"unbook_r{t.get('sheet_row', t['id'])}"):
+                    ok, msg = unbook_topic(t["id"], sheet_row=t.get("sheet_row"), expected_title=t["title"])
+                    if ok: st.success(msg)
+                    else: st.error(msg)
+                    st.rerun()
                 with st.form(key=f"edit_{t['id']}"):
                     idx = CLASSES.index(t["grade"]) if t["grade"] in CLASSES else 0
                     eg = st.selectbox("Класс", CLASSES, index=idx, key=f"eg_{t['id']}")
