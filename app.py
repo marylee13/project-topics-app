@@ -40,6 +40,27 @@ def product_tip(product: str) -> str:
             return tip
     return "Укажите цель, для кого продукт, 3–5 фактов и понятный вывод."
 
+def _book(topic, student_name):
+    try:
+        return book_topic(
+            topic["id"], student_name,
+            sheet_row=topic.get("sheet_row"),
+            expected_title=topic.get("title") or "",
+        )
+    except TypeError:
+        return book_topic(topic["id"], student_name)
+
+def _unbook(topic):
+    try:
+        return unbook_topic(
+            topic["id"],
+            sheet_row=topic.get("sheet_row"),
+            expected_title=topic.get("title") or "",
+        )
+    except TypeError:
+        r = unbook_topic(topic["id"])
+        return r if isinstance(r, tuple) else (True, "Бронь снята")
+
 st.set_page_config(page_title="Темы проектов", page_icon="📚", layout="wide")
 
 if "gcp_service_account" not in st.secrets or "SPREADSHEET_ID" not in st.secrets or "DRIVE_FOLDER_ID" not in st.secrets:
@@ -159,11 +180,7 @@ if role == "Ученик":
                                     if not student_name:
                                         st.warning("Сначала введите ФИО")
                                     else:
-                                        ok, msg = book_topic(
-                                            t["id"], student_name,
-                                            sheet_row=t.get("sheet_row"),
-                                            expected_title=t["title"],
-                                        )
+                                        ok, msg = _book(t, student_name)
                                         if ok:
                                             st.success(msg)
                                             st.rerun()
@@ -318,11 +335,7 @@ else:
                 if st.form_submit_button("Забронировать", type="primary"):
                     if tb_name.strip():
                         tsel = options[tb_label]
-                        ok, msg = book_topic(
-                            tsel["id"], tb_name.strip(),
-                            sheet_row=tsel.get("sheet_row"),
-                            expected_title=tsel["title"],
-                        )
+                        ok, msg = _book(tsel, tb_name.strip())
                         if ok:
                             if tb_note.strip():
                                 log_action("учитель", "рекомендация + бронь", f"{tb_name.strip()} ({tb_class}): {tb_note.strip()}")
@@ -341,7 +354,7 @@ else:
             status = "🔴" if t["is_booked"] else "🟢"
             with st.expander(f"{status} {t['subject']} — {t['title']}"):
                 if t["is_booked"] and st.button("Снять бронь", key=f"unbook_r{t.get('sheet_row', t['id'])}"):
-                    ok, msg = unbook_topic(t["id"], sheet_row=t.get("sheet_row"), expected_title=t["title"])
+                    ok, msg = _unbook(t)
                     if ok: st.success(msg)
                     else: st.error(msg)
                     st.rerun()
