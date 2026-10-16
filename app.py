@@ -323,6 +323,44 @@ else:
                             update_submission_status(s["id"], "на проверке", comment); st.rerun()
 
     with tab_t2:
+        st.subheader("🔓 Снять бронь с ученика")
+        st.caption("Список всех занятых тем. Нажмите кнопку — бронь снимется сразу.")
+        if st.button("🔄 Обновить брони", key="refresh_booked"):
+            get_topics_cached.clear()
+            st.rerun()
+
+        booked = [t for t in get_topics() if t.get("is_booked") == 1]
+        if not booked:
+            st.info("Сейчас нет занятых тем.")
+        else:
+            unbook_q = st.text_input("Найти по ФИО или теме", key="unbook_search", placeholder="Иванов или название темы")
+            shown = booked
+            if unbook_q.strip():
+                q = unbook_q.strip().lower()
+                shown = [
+                    t for t in booked
+                    if q in (t.get("booked_by") or "").lower()
+                    or q in (t.get("title") or "").lower()
+                    or q in (t.get("subject") or "").lower()
+                ]
+            st.write(f"Занято: **{len(booked)}** · показано: **{len(shown)}**")
+            for t in shown:
+                c1, c2 = st.columns([5, 1])
+                with c1:
+                    st.markdown(
+                        f"🔴 **{t.get('booked_by') or '—'}** · {t['subject']} — {t['title']}"
+                        + (f" · _{t['booked_at']}_" if t.get("booked_at") else "")
+                    )
+                with c2:
+                    if st.button("Снять", key=f"ub_{t.get('sheet_row', t['id'])}", type="primary"):
+                        ok, msg = _unbook(t)
+                        if ok:
+                            st.success(msg)
+                        else:
+                            st.error(msg)
+                        st.rerun()
+
+        st.divider()
         st.subheader("Забронировать за ученика")
         free_topics = get_topics(only_free=True)
         if free_topics:
@@ -342,9 +380,12 @@ else:
                             st.success(msg); st.rerun()
                         else:
                             st.error(msg)
+        else:
+            st.info("Нет свободных тем.")
+
         st.divider()
         st.subheader("Управление темами")
-        if st.button("🔄 Обновить список"):
+        if st.button("🔄 Обновить список", key="refresh_all_topics"):
             get_topics_cached.clear(); st.rerun()
         grade_filter = st.selectbox("Класс", ["Все"] + CLASSES, key="gf")
         topic_search = st.text_input("Поиск", key="topic_search")
@@ -352,12 +393,15 @@ else:
         st.caption(f"Показано: {len(topics)}")
         for t in topics:
             status = "🔴" if t["is_booked"] else "🟢"
-            with st.expander(f"{status} {t['subject']} — {t['title']}"):
-                if t["is_booked"] and st.button("Снять бронь", key=f"unbook_r{t.get('sheet_row', t['id'])}"):
-                    ok, msg = _unbook(t)
-                    if ok: st.success(msg)
-                    else: st.error(msg)
-                    st.rerun()
+            who = f" · {t['booked_by']}" if t.get("is_booked") and t.get("booked_by") else ""
+            with st.expander(f"{status} {t['subject']} — {t['title']}{who}"):
+                if t["is_booked"]:
+                    st.write(f"Забронировал: **{t.get('booked_by') or '—'}** ({t.get('booked_at') or '—'})")
+                    if st.button("🔓 Снять бронь", key=f"unbook_r{t.get('sheet_row', t['id'])}", type="primary"):
+                        ok, msg = _unbook(t)
+                        if ok: st.success(msg)
+                        else: st.error(msg)
+                        st.rerun()
                 with st.form(key=f"edit_{t['id']}"):
                     idx = CLASSES.index(t["grade"]) if t["grade"] in CLASSES else 0
                     eg = st.selectbox("Класс", CLASSES, index=idx, key=f"eg_{t['id']}")
