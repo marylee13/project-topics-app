@@ -450,8 +450,17 @@ else:
             md = st.text_input("Описание")
             mf = st.file_uploader("Файл")
             if st.form_submit_button("Опубликовать"):
-                if mt.strip() and mf is not None:
-                    add_material(mt.strip(), md.strip(), mf); st.success("Ок"); st.rerun()
+                if not mt.strip():
+                    st.error("Укажите название")
+                elif mf is None:
+                    st.error("Выберите файл")
+                else:
+                    try:
+                        add_material(mt.strip(), md.strip(), mf)
+                        st.success("Материал опубликован")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(str(e))
         for m in get_materials():
             with st.expander(m["title"]):
                 if m["drive_link"]:
