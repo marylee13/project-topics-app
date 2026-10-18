@@ -519,44 +519,75 @@ def upload_file_to_drive(uploaded_file, prefix="file"):
     filename = f"{prefix}_{timestamp}_{safe}"
 
     data = uploaded_file.getvalue()
+    size_mb = len(data) / (1024 * 1024)
+    if size_mb > 50:
+        raise RuntimeError(
+            f"Файл слишком большой ({size_mb:.1f} МБ). "
+            "Загрузите файл до 50 МБ или положите его в Drive вручную и дайте ссылку."
+        )
+
     mime = uploaded_file.type or _guess_mime(uploaded_file.name)
     if not mime or mime == "application/octet-stream":
         mime = _guess_mime(uploaded_file.name, mime or "application/octet-stream")
 
-    use_resumable = len(data) > 5 * 1024 * 1024
-    media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime, resumable=use_resumable)
     body = {"name": filename, "parents": [folder_id]}
-    try:
-        file = drive_service.files().create(
-            body=body,
-            media_body=media,
-            fields="id, webViewLink",
-            supportsAllDrives=True,
-        ).execute()
-    except Exception as e:
-        err = str(e)
-        low = err.lower()
-        if "storageQuotaExceeded" in err or "service accounts do not have storage" in low or ("quota" in low and "storage" in low):
-            raise RuntimeError(
-                "Google Drive: у сервис-аккаунта нет своего места. "
-                "Откройте папку «Работы учеников» → Поделиться → добавьте "
-                "topics@tidal-discovery-424909-b6.iam.gserviceaccount.com "
-                "как Редактор. Папка должна принадлежать вашему Google-аккаунту."
-            ) from e
-        if "404" in err or "notFound" in err or "File not found" in err:
-            raise RuntimeError(
-                "Папка Drive не найдена. Проверьте Secret DRIVE_FOLDER_ID "
-                "(только id вида 1HxbyyOc9..., без ?ths=true)."
-            ) from e
-        if "403" in err or "forbidden" in low or "permission" in low:
-            raise RuntimeError(
-                "Нет доступа к папке Drive. Поделитесь папкой с "
-                "topics@tidal-discovery-424909-b6.iam.gserviceaccount.com "
-                "(роль: Редактор)."
-            ) from e
-        raise RuntimeError(f"Ошибка загрузки в Drive: {err[:300]}") from e
+    last_err = None
 
-    return file.get("id"), file.get("webViewLink"), filename
+    for attempt in range(4):
+        try:
+            use_resumable = attempt >= 2 or len(data) > 8 * 1024 * 1024
+            media = MediaIoBaseUpload(
+                io.BytesIO(data),
+                mimetype=mime,
+                resumable=use_resumable,
+                chunksize=256 * 1024 if use_resumable else -1,
+            )
+            req = drive_service.files().create(
+                body=body,
+                media_body=media,
+                fields="id, webViewLink",
+                supportsAllDrives=True,
+            )
+            file = req.execute(num_retries=3)
+            return file.get("id"), file.get("webViewLink"), filename
+        except Exception as e:
+            last_err = e
+            err = str(e)
+            low = err.lower()
+            if "storageQuotaExceeded" in err or "service accounts do not have storage" in low:
+                raise RuntimeError(
+                    "Google Drive: у сервис-аккаунта нет своего места. "
+                    "Папка должна быть от вашего аккаунта, а "
+                    "topics@tidal-discovery-424909-b6.iam.gserviceaccount.com — Редактор."
+                ) from e
+            if "404" in err or "notFound" in err:
+                raise RuntimeError(
+                    "Папка Drive не найдена. Проверьте Secret DRIVE_FOLDER_ID "
+                    "(только id, без ?ths=true)."
+                ) from e
+            if ("403" in err or "forbidden" in low) and "broken pipe" not in low:
+                raise RuntimeError(
+                    "Нет доступа к папке Drive. Поделитесь папкой с "
+                    "topics@tidal-discovery-424909-b6.iam.gserviceaccount.com (Редактор)."
+                ) from e
+            if attempt < 3 and (
+                "broken pipe" in low
+                or "errno 32" in low
+                or "connection reset" in low
+                or "timeout" in low
+                or "ssl" in low
+                or "10053" in low
+                or "10054" in low
+            ):
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            break
+
+    err = str(last_err) if last_err else "неизвестная ошибка"
+    raise RuntimeError(
+        f"Ошибка загрузки в Drive (после повторов): {err[:250]}. "
+        "Попробуйте файл поменьше (PDF вместо тяжёлого PPTX) или загрузите вручную в папку Drive."
+    ) from last_err
 
 
 def add_material(title, description, uploaded_file):
