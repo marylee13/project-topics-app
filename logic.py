@@ -25,7 +25,35 @@ HEADERS = {
     "questions": ["id", "student_name", "student_class", "topic_title", "question", "answer",
                   "status", "created_at", "answered_at"],
     "announcements": ["id", "title", "text", "is_active", "created_at", "updated_at"],
+    "achievements": ["id", "student_name", "student_class", "badge_code", "points", "earned_at", "details"],
     "action_log": ["id", "timestamp", "actor", "action", "details"],
+}
+
+BADGES = {
+    "topic": {
+        "icon": "🎯",
+        "title": "Тема выбрана",
+        "description": "Забронировали тему проекта",
+        "points": 10,
+    },
+    "first_submit": {
+        "icon": "📤",
+        "title": "Первая сдача",
+        "description": "Отправили работу на проверку",
+        "points": 20,
+    },
+    "revision": {
+        "icon": "🔧",
+        "title": "Доработал",
+        "description": "Пересдали работу после доработки",
+        "points": 15,
+    },
+    "accepted": {
+        "icon": "✅",
+        "title": "Принято",
+        "description": "Работа принята учителем",
+        "points": 30,
+    },
 }
 
 
@@ -399,6 +427,10 @@ def book_topic(topic_id, student_name, sheet_row=None, expected_title=""):
         ws.update(rowcol_to_a1(row_num, i_at + 1), [[now]], value_input_option="USER_ENTERED")
     log_action(student_name, "бронь темы", f"row={row_num}, title={title}")
     get_topics_cached.clear()
+    try:
+        award_badge(student_name, "topic", details=title)
+    except Exception:
+        pass
     return True, f"Тема «{title}» забронирована!"
 
 
@@ -609,6 +641,14 @@ def submit_work(topic_id, student_name, student_class, uploaded_file):
             value_input_option="USER_ENTERED",
         )
         log_action(student_name, "пересдача работы", f"topic_id={topic_id}")
+        try:
+            old_status = (old[7] if len(old) > 7 else "").strip()
+            if old_status == "на доработке":
+                award_badge(student_name, "revision", student_class, details=str(topic_id))
+            else:
+                award_badge(student_name, "first_submit", student_class, details=str(topic_id))
+        except Exception:
+            pass
         return True, "Работа пересдана."
     new_id = get_next_id(ws)
     history = f"{now} — сдано (на проверке)"
@@ -618,6 +658,10 @@ def submit_work(topic_id, student_name, student_class, uploaded_file):
         value_input_option="USER_ENTERED",
     )
     log_action(student_name, "сдана работа", f"topic_id={topic_id}")
+    try:
+        award_badge(student_name, "first_submit", student_class, details=str(topic_id))
+    except Exception:
+        pass
     return True, "Работа успешно отправлена!"
 
 
@@ -670,6 +714,13 @@ def update_submission_status(sub_id, status, comment=""):
         history = (history + f"\n{now} — {status}{note}").strip()
         ws.update(f"H{row}:L{row}", [[status, comment, submitted, now, history]], value_input_option="USER_ENTERED")
         log_action("учитель", f"статус → {status}", f"submission_id={sub_id}")
+        if status == "принято":
+            try:
+                sname = vals[2] if len(vals) > 2 else ""
+                sclass = vals[3] if len(vals) > 3 else ""
+                award_badge(sname, "accepted", sclass, details=f"submission_id={sub_id}")
+            except Exception:
+                pass
 
 
 def get_student_submissions(student_name):
@@ -847,6 +898,84 @@ def delete_announcement(ann_id):
         log_action("учитель", "удалено объявление", f"id={ann_id}")
         return True, "Удалено"
     return False, "Не найдено"
+
+
+def award_badge(student_name, badge_code, student_class="", details=""):
+    student_name = (student_name or "").strip()
+    badge_code = (badge_code or "").strip()
+    if not student_name or badge_code not in BADGES:
+        return False, None
+    existing = get_student_achievements(student_name)
+    if any(a["badge_code"] == badge_code for a in existing):
+        return False, None
+    meta = BADGES[badge_code]
+    ws = ensure_worksheet("achievements")
+    new_id = get_next_id(ws)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ws.append_row(
+        [new_id, student_name, student_class or "", badge_code, meta["points"], now, details or ""],
+        value_input_option="USER_ENTERED",
+    )
+    try:
+        log_action(student_name, f"значок {badge_code}", meta["title"])
+    except Exception:
+        pass
+    return True, meta
+
+
+def get_student_achievements(student_name):
+    student_name = (student_name or "").strip()
+    if not student_name:
+        return []
+    try:
+        ws = ensure_worksheet("achievements")
+        records = rows_to_records(safe_get_all_values(ws))
+    except Exception:
+        return []
+    result = []
+    for r in records:
+        if str(r.get("student_name", "") or "").strip() != student_name:
+            continue
+        code = str(r.get("badge_code", "") or "").strip()
+        meta = BADGES.get(code, {})
+        try:
+            pts = int(float(str(r.get("points", meta.get("points", 0)) or 0)))
+        except (TypeError, ValueError):
+            pts = meta.get("points", 0)
+        result.append({
+            "id": r.get("id", ""),
+            "student_name": student_name,
+            "student_class": str(r.get("student_class", "") or ""),
+            "badge_code": code,
+            "points": pts,
+            "earned_at": str(r.get("earned_at", "") or ""),
+            "details": str(r.get("details", "") or ""),
+            "icon": meta.get("icon", "🏅"),
+            "title": meta.get("title", code),
+            "description": meta.get("description", ""),
+        })
+    result.sort(key=lambda x: x["earned_at"])
+    return result
+
+
+def get_student_points(student_name):
+    return sum(a["points"] for a in get_student_achievements(student_name))
+
+
+def get_badge_progress(student_name):
+    earned = {a["badge_code"]: a for a in get_student_achievements(student_name)}
+    progress = []
+    for code, meta in BADGES.items():
+        progress.append({
+            "badge_code": code,
+            "icon": meta["icon"],
+            "title": meta["title"],
+            "description": meta["description"],
+            "points": meta["points"],
+            "earned": code in earned,
+            "earned_at": earned[code]["earned_at"] if code in earned else "",
+        })
+    return progress
 
 
 def topics_to_csv(topics):
