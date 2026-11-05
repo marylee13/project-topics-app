@@ -7,6 +7,7 @@ from logic import (
     get_action_log, topics_to_csv, submissions_to_csv, TEACHER_PASSWORD, log_action,
     add_question, get_questions, answer_question, mark_question_status,
     add_announcement, get_announcements, update_announcement, set_announcement_active, delete_announcement,
+    get_student_achievements, get_badge_progress, get_student_points, BADGES,
 )
 from datetime import datetime
 import csv
@@ -103,7 +104,7 @@ if role == "Ученик":
         st.markdown("""
 1. ФИО и класс → забронируйте одну тему (🟢 свободно, 🔴 занята).
 2. Сдайте файл (можно пересдать — старая версия сохранится).
-3. В кабинете смотрите статус и историю.
+3. В кабинете смотрите статус, историю и **достижения**.
 4. Вопрос учителю — вкладка «Вопрос учителю».
         """)
 
@@ -220,6 +221,22 @@ if role == "Ученик":
                 st.caption(booking["subject"] + (f" · {booking['product']}" if booking.get("product") else ""))
             else:
                 st.info("Тема не выбрана.")
+
+            st.markdown("#### 🏅 Достижения")
+            progress = get_badge_progress(name)
+            total_pts = get_student_points(name)
+            earned_n = sum(1 for p in progress if p["earned"])
+            st.caption(f"Баллы: **{total_pts}** · значков: **{earned_n} / {len(progress)}**")
+            cols = st.columns(len(progress) if progress else 1)
+            for i, p in enumerate(progress):
+                with cols[i]:
+                    if p["earned"]:
+                        st.success(f"{p['icon']} **{p['title']}**\n+{p['points']}")
+                        if p.get("earned_at"):
+                            st.caption(p["earned_at"])
+                    else:
+                        st.info(f"⬜ {p['icon']} {p['title']}\n_{p['description']}_")
+
             st.markdown("#### Работы и история статусов")
             subs = get_student_submissions(name)
             if not subs:
