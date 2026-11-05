@@ -163,7 +163,7 @@ def get_project_steps(student_name):
     accepted = any(s.get("status") == "принято" for s in submissions)
     submitted = bool(submissions) or "first_submit" in earned
     correction_requested = any("на доработке" in (s.get("status_history") or "") for s in submissions)
-    revision_done = "revision" in earned or accepted or not correction_requested
+    revision_done = submitted and ("revision" in earned or accepted or not correction_requested)
     return [
         {"label": "Тема выбрана", "done": bool(booking), "hint": "Забронируйте тему"},
         {"label": "Работа отправлена", "done": submitted, "hint": "Отправьте первую версию"},
