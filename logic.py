@@ -473,6 +473,62 @@ def update_topic(topic_id, grade, subject, title, product, deadline=""):
         get_topics_cached.clear()
 
 
+def _guess_mime(filename, fallback="application/octet-stream"):
+    name = (filename or "").lower()
+    mapping = {
+        ".pdf": "application/pdf",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".zip": "application/zip",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+    }
+    for ext, mime in mapping.items():
+        if name.endswith(ext):
+            return mime
+    return fallback
+
+
+def upload_file_to_drive(uploaded_file, prefix="file"):
+    _, drive_service = get_google_clients()
+    folder_id = get_drive_folder_id().split("?")[0].strip().rstrip("/")
+    if "/folders/" in folder_id:
+        folder_id = folder_id.split("/folders/")[-1].split("/")[0].split("?")[0]
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe = re.sub(r"[^\w\s\-.]", "", uploaded_file.name).strip().replace(" ", "_") or "file"
+    filename = f"{prefix}_{timestamp}_{safe}"
+    data = uploaded_file.getvalue()
+    mime = uploaded_file.type or _guess_mime(uploaded_file.name)
+    body = {"name": filename, "parents": [folder_id]}
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime, resumable=False)
+    try:
+        file = drive_service.files().create(
+            body=body, media_body=media, fields="id, webViewLink", supportsAllDrives=True
+        ).execute(num_retries=2)
+        return file.get("id"), file.get("webViewLink"), filename
+    except Exception as e:
+        raise RuntimeError(
+            "Не удалось загрузить в Drive (часто нет квоты у сервис-аккаунта). "
+            "Опубликуйте файл по ссылке: положите в папку Drive и используйте «по ссылке»."
+        ) from e
+
+
+def add_material(title, description, uploaded_file):
+    if uploaded_file is None:
+        raise ValueError("Файл не выбран")
+    drive_id, link, fname = upload_file_to_drive(uploaded_file, prefix="material")
+    ws = ensure_worksheet("materials")
+    new_id = get_next_id(ws)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ws.append_row(
+        [new_id, title, description or "", uploaded_file.name, drive_id, link or "", now],
+        value_input_option="USER_ENTERED",
+    )
+    log_action("учитель", "добавлен материал", title)
+    return new_id
+
+
 def add_material_by_link(title, description, link, filename=""):
     title = (title or "").strip()
     link = (link or "").strip()
@@ -529,7 +585,40 @@ def _find_submission_row(ws, topic_id, student_name):
 
 
 def submit_work(topic_id, student_name, student_class, uploaded_file):
-    return False, "Загрузка файлов через сервис-аккаунт на личном Gmail недоступна. Положите файл в Drive и сообщите учителю ссылку, или используйте вопрос учителю."
+    if uploaded_file is None:
+        return False, "Файл не выбран"
+    try:
+        drive_id, link, _ = upload_file_to_drive(uploaded_file, prefix=f"work_{student_name}")
+    except Exception as e:
+        return False, f"Ошибка загрузки в Drive: {e}"
+    ws = ensure_worksheet("submissions")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    row_num, old = _find_submission_row(ws, topic_id, student_name)
+    if row_num and old:
+        old_name = old[4] if len(old) > 4 else ""
+        old_link = old[6] if len(old) > 6 else ""
+        old_versions = old[12] if len(old) > 12 else ""
+        old_history = old[11] if len(old) > 11 else ""
+        version_entry = f"{now} | {old_name} | {old_link}".strip(" |")
+        versions = f"{version_entry};;{old_versions}".strip("; ") if (old_link or old_name) else old_versions
+        history = (old_history + f"\n{now} — пересдано (на проверке)").strip()
+        ws.update(
+            f"B{row_num}:M{row_num}",
+            [[topic_id, student_name, student_class, uploaded_file.name, drive_id, link or "",
+              "на проверке", "", old[9] if len(old) > 9 else now, now, history, versions]],
+            value_input_option="USER_ENTERED",
+        )
+        log_action(student_name, "пересдача работы", f"topic_id={topic_id}")
+        return True, "Работа пересдана."
+    new_id = get_next_id(ws)
+    history = f"{now} — сдано (на проверке)"
+    ws.append_row(
+        [new_id, topic_id, student_name, student_class, uploaded_file.name, drive_id, link or "",
+         "на проверке", "", now, now, history, ""],
+        value_input_option="USER_ENTERED",
+    )
+    log_action(student_name, "сдана работа", f"topic_id={topic_id}")
+    return True, "Работа успешно отправлена!"
 
 
 def get_submissions(status=None, search=None):
