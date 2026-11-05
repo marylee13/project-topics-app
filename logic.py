@@ -22,6 +22,8 @@ HEADERS = {
                     "drive_file_id", "drive_link", "status", "teacher_comment", "submitted_at", "updated_at",
                     "status_history", "versions"],
     "materials": ["id", "title", "description", "filename", "drive_file_id", "drive_link", "uploaded_at"],
+    "questions": ["id", "student_name", "student_class", "topic_title", "question", "answer",
+                  "status", "created_at", "answered_at"],
     "action_log": ["id", "timestamp", "actor", "action", "details"],
 }
 
@@ -816,6 +818,105 @@ def get_action_log(limit=100):
         })
     result.sort(key=lambda x: x["timestamp"], reverse=True)
     return result[:limit]
+
+
+def add_question(student_name, student_class, question, topic_title=""):
+    student_name = (student_name or "").strip()
+    question = (question or "").strip()
+    if not student_name:
+        return False, "Укажите ФИО"
+    if not question:
+        return False, "Напишите вопрос"
+    if len(question) < 5:
+        return False, "Вопрос слишком короткий"
+    ss = get_spreadsheet()
+    ws = ss.worksheet("questions")
+    new_id = get_next_id(ws)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ws.append_row(
+        [new_id, student_name, student_class or "", topic_title or "", question, "", "новый", now, ""],
+        value_input_option="USER_ENTERED",
+    )
+    log_action(student_name, "вопрос учителю", question[:80])
+    return True, "Вопрос отправлен учителю"
+
+
+def get_questions(status=None, search=None, student_name=None):
+    try:
+        ss = get_spreadsheet()
+        ws = ss.worksheet("questions")
+        values = safe_get_all_values(ws)
+        records = rows_to_records(values)
+    except Exception:
+        return []
+    result = []
+    for r in records:
+        try:
+            qid = int(float(str(r.get("id", 0) or 0)))
+        except (TypeError, ValueError):
+            continue
+        if qid <= 0:
+            continue
+        item = {
+            "id": qid,
+            "student_name": str(r.get("student_name", "") or ""),
+            "student_class": str(r.get("student_class", "") or ""),
+            "topic_title": str(r.get("topic_title", "") or ""),
+            "question": str(r.get("question", "") or ""),
+            "answer": str(r.get("answer", "") or ""),
+            "status": str(r.get("status", "новый") or "новый"),
+            "created_at": str(r.get("created_at", "") or ""),
+            "answered_at": str(r.get("answered_at", "") or ""),
+        }
+        if student_name and item["student_name"] != student_name:
+            continue
+        if status and item["status"] != status:
+            continue
+        if search:
+            s = search.lower()
+            blob = f"{item['student_name']} {item['student_class']} {item['question']} {item['topic_title']}".lower()
+            if s not in blob:
+                continue
+        result.append(item)
+    result.sort(key=lambda x: x["created_at"], reverse=True)
+    return result
+
+
+def answer_question(question_id, answer):
+    answer = (answer or "").strip()
+    if not answer:
+        return False, "Напишите ответ"
+    ss = get_spreadsheet()
+    ws = ss.worksheet("questions")
+    row = find_row_by_id(ws, question_id)
+    if not row:
+        return False, "Вопрос не найден"
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ws.update(
+        f"F{row}:G{row}",
+        [[answer, "отвечен"]],
+        value_input_option="USER_ENTERED",
+    )
+    ws.update(f"I{row}", [[now]], value_input_option="USER_ENTERED")
+    log_action("учитель", "ответ на вопрос", f"id={question_id}")
+    return True, "Ответ сохранён"
+
+
+def mark_question_status(question_id, status):
+    status = (status or "").strip()
+    if status not in ("новый", "в работе", "отвечен", "закрыт"):
+        return False, "Неизвестный статус"
+    ss = get_spreadsheet()
+    ws = ss.worksheet("questions")
+    row = find_row_by_id(ws, question_id)
+    if not row:
+        return False, "Вопрос не найден"
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ws.update(f"G{row}", [[status]], value_input_option="USER_ENTERED")
+    if status == "отвечен":
+        ws.update(f"I{row}", [[now]], value_input_option="USER_ENTERED")
+    log_action("учитель", f"статус вопроса → {status}", f"id={question_id}")
+    return True, f"Статус: {status}"
 
 
 def topics_to_csv(topics):
