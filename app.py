@@ -5,6 +5,7 @@ from logic import (
     get_materials, add_material, add_material_by_link, delete_material,
     submit_work, get_submissions, update_submission_status, get_student_submissions,
     get_action_log, topics_to_csv, submissions_to_csv, TEACHER_PASSWORD, log_action,
+    add_question, get_questions, answer_question, mark_question_status,
 )
 from datetime import datetime
 import csv
@@ -110,6 +111,7 @@ if role == "Ученик":
 1. ФИО и класс → забронируйте одну тему (🟢 свободно, 🔴 занята).
 2. Сдайте файл (можно пересдать — старая версия сохранится).
 3. В кабинете смотрите статус и историю.
+4. Вопрос учителю — вкладка «Вопрос учителю».
         """)
 
     materials = get_materials()
@@ -126,7 +128,7 @@ if role == "Ученик":
                 else:
                     st.caption("Ссылка не указана")
 
-    tab1, tab2, tab3 = st.tabs(["1. Выбрать тему", "2. Сдать работу", "3. Мой кабинет"])
+    tab1, tab2, tab3, tab4 = st.tabs(["1. Выбрать тему", "2. Сдать работу", "3. Мой кабинет", "4. Вопрос учителю"])
 
     with tab1:
         st.subheader("Список тем")
@@ -278,6 +280,58 @@ if role == "Ученик":
                         if s["status"] == "на доработке":
                             st.warning("Нужна доработка — вкладка «Сдать работу».")
 
+            st.markdown("#### Вопросы учителю")
+            my_qs = get_questions(student_name=name)
+            if my_qs:
+                for q in my_qs[:5]:
+                    if q.get("answer"):
+                        st.success(f"**В:** {q['question'][:80]}\n\n**О:** {q['answer']}")
+                    else:
+                        st.caption(f"⏳ {q['created_at']}: {q['question'][:80]}")
+            else:
+                st.caption("Вопросов пока нет — вкладка «Вопрос учителю».")
+
+    with tab4:
+        st.subheader("Вопрос учителю")
+        st.caption("Вопрос сохранится в таблице и не потеряется. Ответ появится здесь и во вкладке «Мой кабинет».")
+        name = st.session_state.get("student_name", "")
+        cls = st.session_state.get("student_class", "")
+        if not name:
+            st.warning("Сначала введите ФИО вверху страницы.")
+        else:
+            booking = get_student_booking(name)
+            default_topic = booking["title"] if booking else ""
+            with st.form("ask_teacher", clear_on_submit=True):
+                q_topic = st.text_input("Тема проекта (необязательно)", value=default_topic)
+                q_text = st.text_area("Ваш вопрос", height=120, placeholder="Напишите вопрос по выбору темы, оформлению, срокам…")
+                if st.form_submit_button("Отправить вопрос", type="primary"):
+                    ok, msg = add_question(name, cls, q_text, q_topic)
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+            st.markdown("#### Мои вопросы")
+            my_qs = get_questions(student_name=name)
+            if not my_qs:
+                st.info("Вы ещё не задавали вопросов.")
+            else:
+                for q in my_qs:
+                    mark = "🟢" if q["status"] == "отвечен" else ("🟡" if q["status"] == "в работе" else "🔵")
+                    preview = (q["question"][:60] + "…") if len(q["question"]) > 60 else q["question"]
+                    with st.expander(f"{mark} {q['created_at']} — {preview}", expanded=(q["status"] == "отвечен")):
+                        st.write(q["question"])
+                        if q.get("topic_title"):
+                            st.caption(f"Тема: {q['topic_title']}")
+                        st.caption(f"Статус: **{q['status']}**")
+                        if q.get("answer"):
+                            st.success(f"**Ответ учителя:** {q['answer']}")
+                            if q.get("answered_at"):
+                                st.caption(f"Отвечено: {q['answered_at']}")
+                        else:
+                            st.info("Ожидает ответа учителя.")
+
 else:
     st.title("Панель учителя")
     if "teacher_logged_in" not in st.session_state:
@@ -295,8 +349,8 @@ else:
         st.session_state.teacher_logged_in = False
         st.rerun()
 
-    tab_t1, tab_t2, tab_t3, tab_t4, tab_t5, tab_t6 = st.tabs([
-        "Работы", "Темы", "Добавить темы", "Материалы", "Экспорт", "Лог",
+    tab_t1, tab_t2, tab_t3, tab_t4, tab_t5, tab_t6, tab_t7 = st.tabs([
+        "Работы", "Темы", "Добавить темы", "Материалы", "Вопросы", "Экспорт", "Лог",
     ])
 
     with tab_t1:
@@ -505,12 +559,64 @@ else:
                     st.rerun()
 
     with tab_t5:
+        st.subheader("Вопросы учеников")
+        c1, c2 = st.columns(2)
+        with c1:
+            q_filter = st.selectbox("Статус", ["Все", "новый", "в работе", "отвечен", "закрыт"], key="q_filter")
+        with c2:
+            q_search = st.text_input("Поиск по ФИО или тексту", key="q_search")
+        q_status = None if q_filter == "Все" else q_filter
+        qs = get_questions(status=q_status, search=q_search or None)
+        new_count = len(get_questions(status="новый"))
+        st.caption(f"Показано: **{len(qs)}** · новых: **{new_count}**")
+        if not qs:
+            st.info("Вопросов нет.")
+        else:
+            for q in qs:
+                mark = {"новый": "🔵", "в работе": "🟡", "отвечен": "🟢", "закрыт": "⚪"}.get(q["status"], "⚪")
+                title = f"{mark} {q['student_name']} ({q['student_class']}) — {q['created_at']}"
+                with st.expander(title, expanded=(q["status"] == "новый")):
+                    st.write(f"**Вопрос:** {q['question']}")
+                    if q.get("topic_title"):
+                        st.caption(f"Тема проекта: {q['topic_title']}")
+                    if q.get("answer"):
+                        st.success(f"**Ваш ответ:** {q['answer']}")
+                        if q.get("answered_at"):
+                            st.caption(f"Отвечено: {q['answered_at']}")
+                    ans = st.text_area("Ответ", value=q.get("answer") or "", key=f"ans_{q['id']}", height=100)
+                    b1, b2, b3, b4 = st.columns(4)
+                    with b1:
+                        if st.button("💾 Ответить", key=f"aq_{q['id']}", type="primary"):
+                            ok, msg = answer_question(q["id"], ans)
+                            if ok:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                    with b2:
+                        if st.button("🟡 В работе", key=f"qw_{q['id']}"):
+                            mark_question_status(q["id"], "в работе")
+                            st.rerun()
+                    with b3:
+                        if st.button("🟢 Отвечен", key=f"qd_{q['id']}"):
+                            if ans.strip():
+                                answer_question(q["id"], ans)
+                            else:
+                                mark_question_status(q["id"], "отвечен")
+                            st.rerun()
+                    with b4:
+                        if st.button("Закрыть", key=f"qc_{q['id']}"):
+                            mark_question_status(q["id"], "закрыт")
+                            st.rerun()
+
+    with tab_t6:
         all_topics = get_topics(); all_subs = get_submissions()
         st.download_button("Темы CSV", data=topics_to_csv(all_topics), file_name="topics.csv", mime="text/csv")
         st.download_button("Работы CSV", data=submissions_to_csv(all_subs), file_name="subs.csv", mime="text/csv")
         st.metric("Тем", len(all_topics)); st.metric("Работ", len(all_subs))
+        st.metric("Вопросов", len(get_questions()))
 
-    with tab_t6:
+    with tab_t7:
         for L in get_action_log(150):
             st.text(f"{L['timestamp']} | {L['actor']} | {L['action']} | {L['details']}")
 
