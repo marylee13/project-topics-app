@@ -8,10 +8,8 @@ from logic import (
     add_question, get_questions, answer_question, mark_question_status,
     add_announcement, get_announcements, update_announcement, set_announcement_active, delete_announcement,
     get_student_achievements, get_badge_progress, get_student_points, BADGES,
+    get_student_level, get_next_steps, teacher_award_badge, LEVELS,
 )
-from datetime import datetime
-import csv
-import io
 
 CLASSES = ["8А", "8Б", "8В", "8Г", "8Д", "8Е"]
 
@@ -104,7 +102,7 @@ if role == "Ученик":
         st.markdown("""
 1. ФИО и класс → забронируйте одну тему (🟢 свободно, 🔴 занята).
 2. Сдайте файл (можно пересдать — старая версия сохранится).
-3. В кабинете смотрите статус, историю и **достижения**.
+3. В кабинете — статус, **уровень и достижения**.
 4. Вопрос учителю — вкладка «Вопрос учителю».
         """)
 
@@ -119,8 +117,6 @@ if role == "Ученик":
                     st.caption(m["filename"])
                 if m.get("drive_link"):
                     st.markdown(f"[⬇️ Открыть / скачать]({m['drive_link']})")
-                else:
-                    st.caption("Ссылка не указана")
 
     tab1, tab2, tab3, tab4 = st.tabs(["1. Выбрать тему", "2. Сдать работу", "3. Мой кабинет", "4. Вопрос учителю"])
 
@@ -133,17 +129,13 @@ if role == "Ученик":
         with col_r:
             st.write(""); st.write("")
             if st.button("🔄 Обновить", key="refresh_topics"):
-                get_topics_cached.clear()
-                st.rerun()
+                get_topics_cached.clear(); st.rerun()
         all_for_count = get_topics_cached()
         free_count = sum(1 for t in all_for_count if t["is_booked"] != 1)
-        st.caption(f"В базе: **{len(all_for_count)}** · 🟢 свободно: **{free_count}** · 🔴 занято: **{len(all_for_count) - free_count}**")
+        st.caption(f"В базе: **{len(all_for_count)}** · 🟢 **{free_count}** · 🔴 **{len(all_for_count) - free_count}**")
         topics = get_topics(only_free=False, search=search_q or None)
         if not topics:
-            if not all_for_count:
-                st.warning("Тем пока нет.")
-            else:
-                st.info("По запросу ничего не найдено.")
+            st.warning("Тем пока нет.") if not all_for_count else st.info("По запросу ничего не найдено.")
         else:
             subjects = {}
             for t in topics:
@@ -157,29 +149,20 @@ if role == "Ученик":
                         c1, c2 = st.columns([4, 1])
                         with c1:
                             st.markdown(f"{mark} **{t['title']}**")
-                            extra = []
-                            if is_busy:
-                                extra.append(f"Занята: {t['booked_by'] or '—'}")
-                            else:
-                                extra.append("Свободна")
-                            if t.get("product"):
-                                extra.append(f"Продукт: {t['product']}")
-                            if t.get("deadline"):
-                                extra.append(f"Дедлайн: {t['deadline']}")
+                            extra = [f"Занята: {t['booked_by'] or '—'}" if is_busy else "Свободна"]
+                            if t.get("product"): extra.append(f"Продукт: {t['product']}")
+                            if t.get("deadline"): extra.append(f"Дедлайн: {t['deadline']}")
                             st.caption(" | ".join(extra))
                         with c2:
                             if is_busy:
                                 st.caption("занята")
-                            else:
-                                if st.button("Забронировать", key=f"book_r{t.get('sheet_row', t['id'])}"):
-                                    if not student_name:
-                                        st.warning("Сначала введите ФИО")
-                                    else:
-                                        ok, msg = _book(t, student_name)
-                                        if ok:
-                                            st.success(msg); st.rerun()
-                                        else:
-                                            st.error(msg)
+                            elif st.button("Забронировать", key=f"book_r{t.get('sheet_row', t['id'])}"):
+                                if not student_name:
+                                    st.warning("Сначала введите ФИО")
+                                else:
+                                    ok, msg = _book(t, student_name)
+                                    if ok: st.success(msg); st.rerun()
+                                    else: st.error(msg)
 
     with tab2:
         st.subheader("Отправка работы")
@@ -204,10 +187,8 @@ if role == "Ученик":
                 label = "Пересдать работу" if existing else "Отправить на проверку"
                 if st.button(label, type="primary"):
                     ok, msg = submit_work(booking["id"], name, cls, uploaded)
-                    if ok:
-                        st.success(msg); st.rerun()
-                    else:
-                        st.error(msg)
+                    if ok: st.success(msg); st.rerun()
+                    else: st.error(msg)
 
     with tab3:
         st.subheader("Мой кабинет")
@@ -222,20 +203,41 @@ if role == "Ученик":
             else:
                 st.info("Тема не выбрана.")
 
-            st.markdown("#### 🏅 Достижения")
+            st.markdown("#### 🏅 Уровень и достижения")
+            lvl = get_student_level(name)
             progress = get_badge_progress(name)
-            total_pts = get_student_points(name)
             earned_n = sum(1 for p in progress if p["earned"])
-            st.caption(f"Баллы: **{total_pts}** · значков: **{earned_n} / {len(progress)}**")
-            cols = st.columns(len(progress) if progress else 1)
-            for i, p in enumerate(progress):
-                with cols[i]:
-                    if p["earned"]:
-                        st.success(f"{p['icon']} **{p['title']}**\n+{p['points']}")
-                        if p.get("earned_at"):
-                            st.caption(p["earned_at"])
-                    else:
-                        st.info(f"⬜ {p['icon']} {p['title']}\n_{p['description']}_")
+            st.markdown(
+                f"**{lvl['icon']} Уровень {lvl['level']}: {lvl['title']}** · "
+                f"**{lvl['points']}** баллов · значков **{earned_n}/{len(progress)}**"
+            )
+            if lvl.get("next_level"):
+                st.progress(lvl["progress_pct"] / 100.0)
+                st.caption(
+                    f"До уровня {lvl['next_level']} «{lvl['next_title']}» {lvl['next_icon']} — "
+                    f"ещё **{lvl['points_to_next']}** баллов"
+                )
+            else:
+                st.progress(1.0)
+                st.caption("Максимальный уровень достигнут ⭐")
+
+            steps = get_next_steps(name)
+            if steps:
+                st.markdown("**Что дальше:**")
+                for s in steps:
+                    st.caption(f"{s['icon']} {s['text']} _(+{s['points']})_)")
+
+            for row_start in range(0, len(progress), 4):
+                chunk = progress[row_start:row_start + 4]
+                cols = st.columns(4)
+                for i, p in enumerate(chunk):
+                    with cols[i]:
+                        if p["earned"]:
+                            st.success(f"{p['icon']} **{p['title']}**\n+{p['points']}")
+                            if p.get("earned_at"):
+                                st.caption(p["earned_at"])
+                        else:
+                            st.info(f"⬜ {p['icon']} {p['title']}")
 
             st.markdown("#### Работы и история статусов")
             subs = get_student_submissions(name)
@@ -283,10 +285,8 @@ if role == "Ученик":
                 q_text = st.text_area("Ваш вопрос", height=120)
                 if st.form_submit_button("Отправить вопрос", type="primary"):
                     ok, msg = add_question(name, cls, q_text, q_topic)
-                    if ok:
-                        st.success(msg); st.rerun()
-                    else:
-                        st.error(msg)
+                    if ok: st.success(msg); st.rerun()
+                    else: st.error(msg)
             st.markdown("#### Мои вопросы")
             my_qs = get_questions(student_name=name)
             if not my_qs:
@@ -319,8 +319,8 @@ else:
         st.session_state.teacher_logged_in = False
         st.rerun()
 
-    tab_t1, tab_t2, tab_t3, tab_t4, tab_t5, tab_t6, tab_t7, tab_t8 = st.tabs([
-        "Работы", "Темы", "Добавить темы", "Материалы", "Объявления", "Вопросы", "Экспорт", "Лог",
+    tab_t1, tab_t2, tab_t3, tab_t4, tab_t5, tab_t6, tab_t7, tab_t8, tab_t9 = st.tabs([
+        "Работы", "Темы", "Добавить темы", "Материалы", "Объявления", "Вопросы", "Значки", "Экспорт", "Лог",
     ])
 
     with tab_t1:
@@ -385,13 +385,11 @@ else:
         st.subheader("Управление темами")
         if st.button("🔄 Обновить список", key="refresh_all_topics"):
             get_topics_cached.clear(); st.rerun()
-        topics = get_topics()
-        for t in topics:
+        for t in get_topics():
             status = "🔴" if t["is_booked"] else "🟢"
             with st.expander(f"{status} {t['subject']} — {t['title']}"):
-                if t["is_booked"]:
-                    if st.button("🔓 Снять бронь", key=f"unbook_r{t.get('sheet_row', t['id'])}"):
-                        _unbook(t); st.rerun()
+                if t["is_booked"] and st.button("🔓 Снять бронь", key=f"unbook_r{t.get('sheet_row', t['id'])}"):
+                    _unbook(t); st.rerun()
                 with st.form(key=f"edit_{t['id']}"):
                     idx = CLASSES.index(t["grade"]) if t["grade"] in CLASSES else 0
                     eg = st.selectbox("Класс", CLASSES, index=idx, key=f"eg_{t['id']}")
@@ -414,8 +412,7 @@ else:
                 if ns.strip() and nt.strip():
                     add_topic(ng, ns.strip(), nt.strip(), np_.strip(), nd.strip())
                     st.success("Добавлено"); st.rerun()
-        st.subheader("Массовое добавление")
-        bulk_text = st.text_area("Строки (класс;предмет;тема;продукт;дедлайн)", height=120)
+        bulk_text = st.text_area("Массово (класс;предмет;тема;продукт;дедлайн)", height=120)
         if st.button("Загрузить пакет"):
             rows = []
             for line in bulk_text.strip().splitlines():
@@ -435,8 +432,7 @@ else:
             ml = st.text_input("Ссылка на файл")
             if st.form_submit_button("Опубликовать по ссылке", type="primary"):
                 try:
-                    add_material_by_link(mt, md, ml)
-                    st.success("Ок"); st.rerun()
+                    add_material_by_link(mt, md, ml); st.success("Ок"); st.rerun()
                 except Exception as e:
                     st.error(str(e))
         for m in get_materials():
@@ -447,54 +443,36 @@ else:
                     delete_material(m["id"]); st.rerun()
 
     with tab_t5:
-        st.subheader("📢 Объявления для учеников")
-        st.caption("Активные объявления показываются в боковой панели слева.")
+        st.subheader("📢 Объявления")
         with st.form("add_ann", clear_on_submit=True):
             at = st.text_input("Заголовок")
-            ax = st.text_area("Текст объявления", height=120)
+            ax = st.text_area("Текст", height=120)
             if st.form_submit_button("Опубликовать", type="primary"):
                 ok, msg = add_announcement(at, ax)
-                if ok:
-                    st.success(msg); st.rerun()
-                else:
-                    st.error(msg)
-        st.markdown("#### Все объявления")
-        all_anns = get_announcements(only_active=False)
-        if not all_anns:
-            st.info("Пока нет объявлений.")
-        for a in all_anns:
+                if ok: st.success(msg); st.rerun()
+                else: st.error(msg)
+        for a in get_announcements(only_active=False):
             status = "🟢 активно" if a["is_active"] else "⚪ скрыто"
-            with st.expander(f"{status} · {a['title']} · {a.get('created_at') or ''}"):
+            with st.expander(f"{status} · {a['title']}"):
                 with st.form(key=f"edit_ann_{a['id']}"):
                     et = st.text_input("Заголовок", value=a["title"], key=f"at_{a['id']}")
-                    ex = st.text_area("Текст", value=a["text"], height=100, key=f"ax_{a['id']}")
+                    ex = st.text_area("Текст", value=a["text"], height=80, key=f"ax_{a['id']}")
                     b1, b2, b3 = st.columns(3)
                     with b1:
                         if st.form_submit_button("💾 Сохранить"):
-                            ok, msg = update_announcement(a["id"], et, ex, is_active=bool(a["is_active"]))
-                            if ok:
-                                st.success(msg); st.rerun()
-                            else:
-                                st.error(msg)
+                            update_announcement(a["id"], et, ex, is_active=bool(a["is_active"])); st.rerun()
                     with b2:
-                        label = "Скрыть" if a["is_active"] else "Показать"
-                        if st.form_submit_button(label):
-                            set_announcement_active(a["id"], not a["is_active"])
-                            st.rerun()
+                        if st.form_submit_button("Скрыть" if a["is_active"] else "Показать"):
+                            set_announcement_active(a["id"], not a["is_active"]); st.rerun()
                     with b3:
                         if st.form_submit_button("🗑 Удалить"):
-                            delete_announcement(a["id"])
-                            st.rerun()
+                            delete_announcement(a["id"]); st.rerun()
 
     with tab_t6:
         st.subheader("Вопросы учеников")
-        c1, c2 = st.columns(2)
-        with c1:
-            q_filter = st.selectbox("Статус", ["Все", "новый", "в работе", "отвечен", "закрыт"], key="q_filter")
-        with c2:
-            q_search = st.text_input("Поиск", key="q_search")
+        q_filter = st.selectbox("Статус", ["Все", "новый", "в работе", "отвечен", "закрыт"], key="q_filter")
+        q_search = st.text_input("Поиск", key="q_search")
         qs = get_questions(status=None if q_filter == "Все" else q_filter, search=q_search or None)
-        st.caption(f"Показано: **{len(qs)}** · новых: **{len(get_questions(status='новый'))}**")
         for q in qs:
             mark = {"новый": "🔵", "в работе": "🟡", "отвечен": "🟢", "закрыт": "⚪"}.get(q["status"], "⚪")
             with st.expander(f"{mark} {q['student_name']} ({q['student_class']}) — {q['created_at']}", expanded=(q["status"] == "новый")):
@@ -516,12 +494,32 @@ else:
                         mark_question_status(q["id"], "закрыт"); st.rerun()
 
     with tab_t7:
+        st.subheader("🏅 Выдача значков")
+        st.caption("Автоматически: тема, сдача, доработка, принято, вопрос. Вручную: помощник, защита и любые ещё не выданные.")
+        with st.form("teacher_award", clear_on_submit=True):
+            aw_name = st.text_input("ФИО ученика")
+            aw_class = st.selectbox("Класс", CLASSES, key="aw_class")
+            badge_labels = {f"{m['icon']} {m['title']} (+{m['points']})": code for code, m in BADGES.items()}
+            aw_badge_label = st.selectbox("Значок", list(badge_labels.keys()))
+            aw_details = st.text_input("Комментарий", placeholder="за устную защиту / помощь в классе")
+            if st.form_submit_button("Выдать значок", type="primary"):
+                ok, msg = teacher_award_badge(aw_name.strip(), badge_labels[aw_badge_label], aw_class, aw_details.strip())
+                if ok: st.success(msg); st.rerun()
+                else: st.error(msg)
+        st.markdown("#### Справка по значкам")
+        for code, m in BADGES.items():
+            st.caption(f"{m['icon']} **{m['title']}** — {m['description']} _(+{m['points']})_)")
+        st.markdown("#### Уровни")
+        for lv in LEVELS:
+            st.caption(f"{lv['icon']} Уровень {lv['level']}: **{lv['title']}** — от {lv['min_points']} баллов")
+
+    with tab_t8:
         all_topics = get_topics(); all_subs = get_submissions()
         st.download_button("Темы CSV", data=topics_to_csv(all_topics), file_name="topics.csv", mime="text/csv")
         st.download_button("Работы CSV", data=submissions_to_csv(all_subs), file_name="subs.csv", mime="text/csv")
         st.metric("Тем", len(all_topics)); st.metric("Работ", len(all_subs)); st.metric("Вопросов", len(get_questions()))
 
-    with tab_t8:
+    with tab_t9:
         for L in get_action_log(150):
             st.text(f"{L['timestamp']} | {L['actor']} | {L['action']} | {L['details']}")
 
