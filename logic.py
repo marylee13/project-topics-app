@@ -76,15 +76,50 @@ def get_drive_folder_id():
     return str(st.secrets["DRIVE_FOLDER_ID"]).strip()
 
 
+def ensure_worksheet(name):
+    ss = get_spreadsheet()
+    try:
+        return ss.worksheet(name)
+    except Exception as e:
+        from gspread.exceptions import WorksheetNotFound
+        if not isinstance(e, WorksheetNotFound):
+            raise
+        headers = HEADERS.get(name, ["id"])
+        try:
+            ws = ss.add_worksheet(title=name, rows=2000, cols=max(len(headers), 14))
+            ws.update("A1", [headers], value_input_option="USER_ENTERED")
+            time.sleep(0.3)
+            return ws
+        except Exception:
+            return ss.worksheet(name)
+
+
 @st.cache_resource
 def init_sheets():
     ss = get_spreadsheet()
     existing_titles = {ws.title for ws in ss.worksheets()}
     for name, headers in HEADERS.items():
         if name not in existing_titles:
-            ws = ss.add_worksheet(title=name, rows=2000, cols=max(len(headers), 14))
-            ws.update("A1", [headers])
-            time.sleep(0.5)
+            try:
+                ws = ss.add_worksheet(title=name, rows=2000, cols=max(len(headers), 14))
+                ws.update("A1", [headers], value_input_option="USER_ENTERED")
+                time.sleep(0.5)
+            except Exception:
+                pass
+    return True
+
+
+def ensure_all_sheets():
+    ss = get_spreadsheet()
+    existing_titles = {ws.title for ws in ss.worksheets()}
+    for name, headers in HEADERS.items():
+        if name not in existing_titles:
+            try:
+                ws = ss.add_worksheet(title=name, rows=2000, cols=max(len(headers), 14))
+                ws.update("A1", [headers], value_input_option="USER_ENTERED")
+                time.sleep(0.4)
+            except Exception:
+                pass
     return True
 
 
@@ -177,8 +212,7 @@ def _cell_is_booked(value, booked_by=""):
 
 def log_action(actor, action, details=""):
     try:
-        ss = get_spreadsheet()
-        ws = ss.worksheet("action_log")
+        ws = ensure_worksheet("action_log")
         new_id = get_next_id(ws)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         ws.append_row([new_id, now, actor, action, details], value_input_option="USER_ENTERED")
@@ -190,10 +224,7 @@ def add_topic(grade, subject, title, product, deadline=""):
     ss = get_spreadsheet()
     ws = ss.worksheet("topics")
     new_id = get_next_id(ws)
-    ws.append_row(
-        [new_id, grade, subject, title, product, 0, "", "", deadline or ""],
-        value_input_option="USER_ENTERED",
-    )
+    ws.append_row([new_id, grade, subject, title, product, 0, "", "", deadline or ""], value_input_option="USER_ENTERED")
     try:
         log_action("учитель", "добавлена тема", f"id={new_id}, {grade}: {subject}: {title}")
     except Exception:
@@ -209,22 +240,16 @@ def add_topics_bulk(rows):
         subject = str(r.get("subject", "")).strip()
         if not title or not subject:
             continue
-        prepared.append({
-            "grade": str(r.get("grade", "8А")).strip() or "8А",
-            "subject": subject,
-            "title": title,
-            "product": str(r.get("product", "")).strip(),
-            "deadline": str(r.get("deadline", "")).strip(),
-        })
+        prepared.append({"grade": str(r.get("grade", "8А")).strip() or "8А", "subject": subject, "title": title,
+                         "product": str(r.get("product", "")).strip(), "deadline": str(r.get("deadline", "")).strip()})
     if not prepared:
         return 0
     ss = get_spreadsheet()
     ws = ss.worksheet("topics")
     start_id = get_next_id(ws)
     batch = [[start_id + i, r["grade"], r["subject"], r["title"], r["product"], 0, "", "", r["deadline"]] for i, r in enumerate(prepared)]
-    chunk_size = 50
-    for i in range(0, len(batch), chunk_size):
-        chunk = batch[i:i + chunk_size]
+    for i in range(0, len(batch), 50):
+        chunk = batch[i:i + 50]
         for attempt in range(5):
             try:
                 ws.append_rows(chunk, value_input_option="USER_ENTERED")
@@ -232,9 +257,8 @@ def add_topics_bulk(rows):
             except Exception as e:
                 if attempt == 4:
                     raise
-                wait = 20 * (attempt + 1) if ("429" in str(e) or "Quota" in str(e)) else 3 * (attempt + 1)
-                time.sleep(wait)
-        if i + chunk_size < len(batch):
+                time.sleep(20 * (attempt + 1) if ("429" in str(e) or "Quota" in str(e)) else 3 * (attempt + 1))
+        if i + 50 < len(batch):
             time.sleep(3)
     try:
         log_action("учитель", "массовое добавление тем", f"добавлено: {len(batch)}")
@@ -264,17 +288,10 @@ def _normalize_topic_row(r, row_index):
             is_booked = 1 if int(float(raw_booked)) == 1 else 0
         except (TypeError, ValueError):
             is_booked = 0
-    return {
-        "id": tid,
-        "grade": str(r.get("grade") or r.get("Класс") or r.get("класс") or "").strip(),
-        "subject": subject,
-        "title": title,
-        "product": str(r.get("product") or r.get("Продукт") or "").strip(),
-        "is_booked": is_booked,
-        "booked_by": str(r.get("booked_by") or "").strip(),
-        "booked_at": str(r.get("booked_at") or "").strip(),
-        "deadline": str(r.get("deadline") or r.get("Дедлайн") or "").strip(),
-    }
+    return {"id": tid, "grade": str(r.get("grade") or r.get("Класс") or r.get("класс") or "").strip(),
+            "subject": subject, "title": title, "product": str(r.get("product") or r.get("Продукт") or "").strip(),
+            "is_booked": is_booked, "booked_by": str(r.get("booked_by") or "").strip(),
+            "booked_at": str(r.get("booked_at") or "").strip(), "deadline": str(r.get("deadline") or r.get("Дедлайн") or "").strip()}
 
 
 @st.cache_data(ttl=20, show_spinner=False)
@@ -289,15 +306,9 @@ def get_topics_cached():
         headers.pop()
     result = []
     for i, row in enumerate(values):
-        if i == 0:
+        if i == 0 or not any(str(c).strip() for c in row):
             continue
-        if not any(str(c).strip() for c in row):
-            continue
-        rec = {}
-        for j, h in enumerate(headers):
-            if not h:
-                continue
-            rec[h] = row[j] if j < len(row) else ""
+        rec = {h: (row[j] if j < len(row) else "") for j, h in enumerate(headers) if h}
         sheet_row = i + 1
         item = _normalize_topic_row(rec, sheet_row)
         if item:
@@ -315,8 +326,7 @@ def get_topics(grade=None, only_free=False, search=None):
             continue
         if search:
             s = search.lower()
-            blob = f"{item['title']} {item['subject']} {item['product']} {item['booked_by']}".lower()
-            if s not in blob:
+            if s not in f"{item['title']} {item['subject']} {item['product']} {item['booked_by']}".lower():
                 continue
         result.append(item)
     result.sort(key=lambda x: (x["subject"], x["title"]))
@@ -350,11 +360,7 @@ def book_topic(topic_id, student_name, sheet_row=None, expected_title=""):
             if n in headers:
                 return headers.index(n)
         return default
-    i_id = col("id", default=0)
-    i_title = col("title", "тема", default=3)
-    i_booked = col("is_booked", "занята", default=5)
-    i_by = col("booked_by", default=6)
-    i_at = col("booked_at", default=7)
+    i_id, i_title, i_booked, i_by, i_at = col("id", default=0), col("title", "тема", default=3), col("is_booked", "занята", default=5), col("booked_by", default=6), col("booked_at", default=7)
     row_num = None
     if sheet_row is not None:
         try:
@@ -372,22 +378,17 @@ def book_topic(topic_id, student_name, sheet_row=None, expected_title=""):
                 row_num = i + 1
                 break
     if row_num is None:
-        return False, "Тема не найдена. Нажмите 🔄 Обновить и выберите тему снова."
+        return False, "Тема не найдена. Нажмите 🔄 Обновить."
     row = list(values[row_num - 1])
     while len(row) < 9:
         row.append("")
     title = str(row[i_title] if i_title < len(row) else "").strip()
     flag = row[i_booked] if i_booked < len(row) else ""
     by = row[i_by] if i_by < len(row) else ""
-    if expected_title and title:
-        if title.strip().lower() != str(expected_title).strip().lower():
-            return False, (
-                f"На месте выбранной темы сейчас «{title}», а не «{expected_title}». "
-                "Нажмите 🔄 Обновить и забронируйте снова."
-            )
+    if expected_title and title and title.strip().lower() != str(expected_title).strip().lower():
+        return False, f"На месте темы сейчас «{title}». Обновите список."
     if _cell_is_booked(flag, by):
-        who = f" ({by})" if by else ""
-        return False, f"Тема «{title}» уже занята{who}. Нажмите 🔄 Обновить."
+        return False, f"Тема «{title}» уже занята" + (f" ({by})" if by else "")
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     if i_by == i_booked + 1 and i_at == i_booked + 2:
         a1 = f"{rowcol_to_a1(row_num, i_booked + 1)}:{rowcol_to_a1(row_num, i_at + 1)}"
@@ -396,7 +397,7 @@ def book_topic(topic_id, student_name, sheet_row=None, expected_title=""):
         ws.update(rowcol_to_a1(row_num, i_booked + 1), [[1]], value_input_option="USER_ENTERED")
         ws.update(rowcol_to_a1(row_num, i_by + 1), [[student_name]], value_input_option="USER_ENTERED")
         ws.update(rowcol_to_a1(row_num, i_at + 1), [[now]], value_input_option="USER_ENTERED")
-    log_action(student_name, "бронь темы", f"row={row_num}, id={topic_id}, title={title}")
+    log_action(student_name, "бронь темы", f"row={row_num}, title={title}")
     get_topics_cached.clear()
     return True, f"Тема «{title}» забронирована!"
 
@@ -413,11 +414,7 @@ def unbook_topic(topic_id, actor="учитель", sheet_row=None, expected_titl
             if n in headers:
                 return headers.index(n)
         return default
-    i_id = col("id", default=0)
-    i_title = col("title", "тема", default=3)
-    i_booked = col("is_booked", "занята", default=5)
-    i_by = col("booked_by", default=6)
-    i_at = col("booked_at", default=7)
+    i_id, i_title, i_booked, i_by, i_at = col("id", default=0), col("title", "тема", default=3), col("is_booked", "занята", default=5), col("booked_by", default=6), col("booked_at", default=7)
     row_num = None
     if sheet_row is not None:
         try:
@@ -441,8 +438,6 @@ def unbook_topic(topic_id, actor="учитель", sheet_row=None, expected_titl
         row.append("")
     title = str(row[i_title] if i_title < len(row) else "").strip()
     was_by = row[i_by] if i_by < len(row) else ""
-    if expected_title and title and title.lower() != str(expected_title).strip().lower():
-        return False, f"На этой строке сейчас «{title}». Обновите список."
     if i_by == i_booked + 1 and i_at == i_booked + 2:
         a1 = f"{rowcol_to_a1(row_num, i_booked + 1)}:{rowcol_to_a1(row_num, i_at + 1)}"
         ws.update(a1, [[0, "", ""]], value_input_option="USER_ENTERED")
@@ -450,7 +445,7 @@ def unbook_topic(topic_id, actor="учитель", sheet_row=None, expected_titl
         ws.update(rowcol_to_a1(row_num, i_booked + 1), [[0]], value_input_option="USER_ENTERED")
         ws.update(rowcol_to_a1(row_num, i_by + 1), [[""]], value_input_option="USER_ENTERED")
         ws.update(rowcol_to_a1(row_num, i_at + 1), [[""]], value_input_option="USER_ENTERED")
-    log_action(actor, "снята бронь", f"row={row_num}, id={topic_id}, title={title}, was={was_by}")
+    log_action(actor, "снята бронь", f"row={row_num}, title={title}, was={was_by}")
     get_topics_cached.clear()
     return True, f"Бронь снята с темы «{title or topic_id}»"
 
@@ -473,90 +468,9 @@ def update_topic(topic_id, grade, subject, title, product, deadline=""):
         vals = ws.row_values(row)
         while len(vals) < 9:
             vals.append("")
-        ws.update(
-            f"B{row}:I{row}",
-            [[grade, subject, title, product, vals[5], vals[6], vals[7], deadline or ""]],
-            value_input_option="USER_ENTERED",
-        )
+        ws.update(f"B{row}:I{row}", [[grade, subject, title, product, vals[5], vals[6], vals[7], deadline or ""]], value_input_option="USER_ENTERED")
         log_action("учитель", "изменена тема", f"topic_id={topic_id}")
         get_topics_cached.clear()
-
-
-def _guess_mime(filename, fallback="application/octet-stream"):
-    name = (filename or "").lower()
-    mapping = {
-        ".pdf": "application/pdf",
-        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ".ppt": "application/vnd.ms-powerpoint",
-        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ".doc": "application/msword",
-        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ".xls": "application/vnd.ms-excel",
-        ".zip": "application/zip",
-        ".rar": "application/vnd.rar",
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".gif": "image/gif",
-        ".txt": "text/plain",
-        ".mp4": "video/mp4",
-        ".mp3": "audio/mpeg",
-    }
-    for ext, mime in mapping.items():
-        if name.endswith(ext):
-            return mime
-    return fallback
-
-
-def upload_file_to_drive(uploaded_file, prefix="file"):
-    _, drive_service = get_google_clients()
-    folder_id = get_drive_folder_id()
-    folder_id = folder_id.split("?")[0].strip().rstrip("/")
-    if "/folders/" in folder_id:
-        folder_id = folder_id.split("/folders/")[-1].split("/")[0].split("?")[0]
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe = re.sub(r"[^\w\s\-.]", "", uploaded_file.name).strip().replace(" ", "_")
-    if not safe:
-        safe = "file"
-    filename = f"{prefix}_{timestamp}_{safe}"
-    data = uploaded_file.getvalue()
-    size_mb = len(data) / (1024 * 1024)
-    if size_mb > 50:
-        raise RuntimeError(f"Файл слишком большой ({size_mb:.1f} МБ).")
-    mime = uploaded_file.type or _guess_mime(uploaded_file.name)
-    if not mime or mime == "application/octet-stream":
-        mime = _guess_mime(uploaded_file.name, mime or "application/octet-stream")
-    body = {"name": filename, "parents": [folder_id]}
-    last_err = None
-    for attempt in range(4):
-        try:
-            use_resumable = attempt >= 2 or len(data) > 8 * 1024 * 1024
-            media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime, resumable=use_resumable, chunksize=256 * 1024 if use_resumable else -1)
-            file = drive_service.files().create(body=body, media_body=media, fields="id, webViewLink", supportsAllDrives=True).execute(num_retries=3)
-            return file.get("id"), file.get("webViewLink"), filename
-        except Exception as e:
-            last_err = e
-            err = str(e).lower()
-            if "storagequotaexceeded" in err or "service accounts do not have storage" in err:
-                raise RuntimeError("Google Drive: у сервис-аккаунта нет места. Используйте публикацию по ссылке.") from e
-            if attempt < 3 and ("broken pipe" in err or "errno 32" in err or "timeout" in err):
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            break
-    raise RuntimeError(f"Ошибка загрузки в Drive: {str(last_err)[:250]}") from last_err
-
-
-def add_material(title, description, uploaded_file):
-    if uploaded_file is None:
-        raise ValueError("Файл не выбран")
-    drive_id, link, fname = upload_file_to_drive(uploaded_file, prefix="material")
-    ss = get_spreadsheet()
-    ws = ss.worksheet("materials")
-    new_id = get_next_id(ws)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    ws.append_row([new_id, title, description or "", uploaded_file.name, drive_id, link or "", now], value_input_option="USER_ENTERED")
-    log_action("учитель", "добавлен материал", title)
-    return new_id
 
 
 def add_material_by_link(title, description, link, filename=""):
@@ -566,8 +480,7 @@ def add_material_by_link(title, description, link, filename=""):
         raise ValueError("Укажите название")
     if not link or not (link.startswith("http://") or link.startswith("https://")):
         raise ValueError("Укажите ссылку https://")
-    ss = get_spreadsheet()
-    ws = ss.worksheet("materials")
+    ws = ensure_worksheet("materials")
     new_id = get_next_id(ws)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     fname = (filename or "").strip() or "файл по ссылке"
@@ -578,8 +491,7 @@ def add_material_by_link(title, description, link, filename=""):
 
 def get_materials():
     try:
-        ss = get_spreadsheet()
-        ws = ss.worksheet("materials")
+        ws = ensure_worksheet("materials")
         records = rows_to_records(safe_get_all_values(ws))
     except Exception:
         return []
@@ -599,8 +511,7 @@ def get_materials():
 
 
 def delete_material(mat_id):
-    ss = get_spreadsheet()
-    ws = ss.worksheet("materials")
+    ws = ensure_worksheet("materials")
     row = find_row_by_id(ws, mat_id)
     if row:
         ws.delete_rows(row)
@@ -618,38 +529,12 @@ def _find_submission_row(ws, topic_id, student_name):
 
 
 def submit_work(topic_id, student_name, student_class, uploaded_file):
-    if uploaded_file is None:
-        return False, "Файл не выбран"
-    try:
-        drive_id, link, _ = upload_file_to_drive(uploaded_file, prefix=f"work_{student_name}")
-    except Exception as e:
-        return False, f"Ошибка загрузки в Drive: {e}"
-    ss = get_spreadsheet()
-    ws = ss.worksheet("submissions")
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    row_num, old = _find_submission_row(ws, topic_id, student_name)
-    if row_num and old:
-        old_name = old[4] if len(old) > 4 else ""
-        old_link = old[6] if len(old) > 6 else ""
-        old_versions = old[12] if len(old) > 12 else ""
-        old_history = old[11] if len(old) > 11 else ""
-        version_entry = f"{now} | {old_name} | {old_link}".strip(" |")
-        versions = f"{version_entry};;{old_versions}".strip("; ") if (old_link or old_name) else old_versions
-        history = (old_history + f"\n{now} — пересдано (на проверке)").strip()
-        ws.update(f"B{row_num}:M{row_num}", [[topic_id, student_name, student_class, uploaded_file.name, drive_id, link or "", "на проверке", "", old[9] if len(old) > 9 else now, now, history, versions]], value_input_option="USER_ENTERED")
-        log_action(student_name, "пересдача работы", f"topic_id={topic_id}")
-        return True, "Работа пересдана."
-    new_id = get_next_id(ws)
-    history = f"{now} — сдано (на проверке)"
-    ws.append_row([new_id, topic_id, student_name, student_class, uploaded_file.name, drive_id, link or "", "на проверке", "", now, now, history, ""], value_input_option="USER_ENTERED")
-    log_action(student_name, "сдана работа", f"topic_id={topic_id}")
-    return True, "Работа успешно отправлена!"
+    return False, "Загрузка файлов через сервис-аккаунт на личном Gmail недоступна. Положите файл в Drive и сообщите учителю ссылку, или используйте вопрос учителю."
 
 
 def get_submissions(status=None, search=None):
     try:
-        ss = get_spreadsheet()
-        ws = ss.worksheet("submissions")
+        ws = ensure_worksheet("submissions")
         records = rows_to_records(safe_get_all_values(ws))
     except Exception as e:
         st.warning(f"Не удалось загрузить работы: {e}")
@@ -683,8 +568,7 @@ def get_submissions(status=None, search=None):
 
 
 def update_submission_status(sub_id, status, comment=""):
-    ss = get_spreadsheet()
-    ws = ss.worksheet("submissions")
+    ws = ensure_worksheet("submissions")
     row = find_row_by_id(ws, sub_id)
     if row:
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -705,8 +589,7 @@ def get_student_submissions(student_name):
 
 def get_action_log(limit=100):
     try:
-        ss = get_spreadsheet()
-        ws = ss.worksheet("action_log")
+        ws = ensure_worksheet("action_log")
         records = rows_to_records(safe_get_all_values(ws))
     except Exception:
         return []
@@ -723,8 +606,7 @@ def add_question(student_name, student_class, question, topic_title=""):
         return False, "Укажите ФИО"
     if not question or len(question) < 5:
         return False, "Напишите вопрос"
-    ss = get_spreadsheet()
-    ws = ss.worksheet("questions")
+    ws = ensure_worksheet("questions")
     new_id = get_next_id(ws)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     ws.append_row([new_id, student_name, student_class or "", topic_title or "", question, "", "новый", now, ""], value_input_option="USER_ENTERED")
@@ -734,8 +616,7 @@ def add_question(student_name, student_class, question, topic_title=""):
 
 def get_questions(status=None, search=None, student_name=None):
     try:
-        ss = get_spreadsheet()
-        ws = ss.worksheet("questions")
+        ws = ensure_worksheet("questions")
         records = rows_to_records(safe_get_all_values(ws))
     except Exception:
         return []
@@ -768,8 +649,7 @@ def answer_question(question_id, answer):
     answer = (answer or "").strip()
     if not answer:
         return False, "Напишите ответ"
-    ss = get_spreadsheet()
-    ws = ss.worksheet("questions")
+    ws = ensure_worksheet("questions")
     row = find_row_by_id(ws, question_id)
     if not row:
         return False, "Вопрос не найден"
@@ -784,8 +664,7 @@ def mark_question_status(question_id, status):
     status = (status or "").strip()
     if status not in ("новый", "в работе", "отвечен", "закрыт"):
         return False, "Неизвестный статус"
-    ss = get_spreadsheet()
-    ws = ss.worksheet("questions")
+    ws = ensure_worksheet("questions")
     row = find_row_by_id(ws, question_id)
     if not row:
         return False, "Вопрос не найден"
@@ -804,8 +683,7 @@ def add_announcement(title, text):
         return False, "Укажите заголовок"
     if not text:
         return False, "Напишите текст объявления"
-    ss = get_spreadsheet()
-    ws = ss.worksheet("announcements")
+    ws = ensure_worksheet("announcements")
     new_id = get_next_id(ws)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     ws.append_row([new_id, title, text, 1, now, now], value_input_option="USER_ENTERED")
@@ -815,8 +693,7 @@ def add_announcement(title, text):
 
 def get_announcements(only_active=True):
     try:
-        ss = get_spreadsheet()
-        ws = ss.worksheet("announcements")
+        ws = ensure_worksheet("announcements")
         records = rows_to_records(safe_get_all_values(ws))
     except Exception:
         return []
@@ -849,8 +726,7 @@ def update_announcement(ann_id, title, text, is_active=True):
     text = (text or "").strip()
     if not title or not text:
         return False, "Заголовок и текст обязательны"
-    ss = get_spreadsheet()
-    ws = ss.worksheet("announcements")
+    ws = ensure_worksheet("announcements")
     row = find_row_by_id(ws, ann_id)
     if not row:
         return False, "Объявление не найдено"
@@ -863,8 +739,7 @@ def update_announcement(ann_id, title, text, is_active=True):
 
 
 def set_announcement_active(ann_id, is_active):
-    ss = get_spreadsheet()
-    ws = ss.worksheet("announcements")
+    ws = ensure_worksheet("announcements")
     row = find_row_by_id(ws, ann_id)
     if not row:
         return False, "Не найдено"
@@ -876,8 +751,7 @@ def set_announcement_active(ann_id, is_active):
 
 
 def delete_announcement(ann_id):
-    ss = get_spreadsheet()
-    ws = ss.worksheet("announcements")
+    ws = ensure_worksheet("announcements")
     row = find_row_by_id(ws, ann_id)
     if row:
         ws.delete_rows(row)
