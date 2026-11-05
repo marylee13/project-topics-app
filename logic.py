@@ -54,7 +54,33 @@ BADGES = {
         "description": "Работа принята учителем",
         "points": 30,
     },
+    "question": {
+        "icon": "💬",
+        "title": "Спросил учителя",
+        "description": "Задали вопрос по проекту",
+        "points": 5,
+    },
+    "helper": {
+        "icon": "🤝",
+        "title": "Помощник",
+        "description": "Помогли однокласснику или классу (вручную)",
+        "points": 10,
+    },
+    "defense": {
+        "icon": "🎤",
+        "title": "Защита",
+        "description": "Устно защитили проект (вручную)",
+        "points": 20,
+    },
 }
+
+LEVELS = [
+    {"level": 1, "min_points": 0, "title": "Новичок", "icon": "🌱"},
+    {"level": 2, "min_points": 20, "title": "Исследователь", "icon": "🔍"},
+    {"level": 3, "min_points": 50, "title": "Автор проекта", "icon": "📝"},
+    {"level": 4, "min_points": 80, "title": "Мастер доработки", "icon": "🛠️"},
+    {"level": 5, "min_points": 100, "title": "Проект завершён", "icon": "⭐"},
+]
 
 
 @st.cache_resource
@@ -507,15 +533,9 @@ def update_topic(topic_id, grade, subject, title, product, deadline=""):
 
 def _guess_mime(filename, fallback="application/octet-stream"):
     name = (filename or "").lower()
-    mapping = {
-        ".pdf": "application/pdf",
-        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ".zip": "application/zip",
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-    }
+    mapping = {".pdf": "application/pdf", ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+               ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".zip": "application/zip",
+               ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
     for ext, mime in mapping.items():
         if name.endswith(ext):
             return mime
@@ -535,15 +555,10 @@ def upload_file_to_drive(uploaded_file, prefix="file"):
     body = {"name": filename, "parents": [folder_id]}
     media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime, resumable=False)
     try:
-        file = drive_service.files().create(
-            body=body, media_body=media, fields="id, webViewLink", supportsAllDrives=True
-        ).execute(num_retries=2)
+        file = drive_service.files().create(body=body, media_body=media, fields="id, webViewLink", supportsAllDrives=True).execute(num_retries=2)
         return file.get("id"), file.get("webViewLink"), filename
     except Exception as e:
-        raise RuntimeError(
-            "Не удалось загрузить в Drive (часто нет квоты у сервис-аккаунта). "
-            "Опубликуйте файл по ссылке: положите в папку Drive и используйте «по ссылке»."
-        ) from e
+        raise RuntimeError("Не удалось загрузить в Drive. Опубликуйте файл по ссылке.") from e
 
 
 def add_material(title, description, uploaded_file):
@@ -553,10 +568,7 @@ def add_material(title, description, uploaded_file):
     ws = ensure_worksheet("materials")
     new_id = get_next_id(ws)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    ws.append_row(
-        [new_id, title, description or "", uploaded_file.name, drive_id, link or "", now],
-        value_input_option="USER_ENTERED",
-    )
+    ws.append_row([new_id, title, description or "", uploaded_file.name, drive_id, link or "", now], value_input_option="USER_ENTERED")
     log_action("учитель", "добавлен материал", title)
     return new_id
 
@@ -634,12 +646,8 @@ def submit_work(topic_id, student_name, student_class, uploaded_file):
         version_entry = f"{now} | {old_name} | {old_link}".strip(" |")
         versions = f"{version_entry};;{old_versions}".strip("; ") if (old_link or old_name) else old_versions
         history = (old_history + f"\n{now} — пересдано (на проверке)").strip()
-        ws.update(
-            f"B{row_num}:M{row_num}",
-            [[topic_id, student_name, student_class, uploaded_file.name, drive_id, link or "",
-              "на проверке", "", old[9] if len(old) > 9 else now, now, history, versions]],
-            value_input_option="USER_ENTERED",
-        )
+        ws.update(f"B{row_num}:M{row_num}", [[topic_id, student_name, student_class, uploaded_file.name, drive_id, link or "",
+              "на проверке", "", old[9] if len(old) > 9 else now, now, history, versions]], value_input_option="USER_ENTERED")
         log_action(student_name, "пересдача работы", f"topic_id={topic_id}")
         try:
             old_status = (old[7] if len(old) > 7 else "").strip()
@@ -652,11 +660,8 @@ def submit_work(topic_id, student_name, student_class, uploaded_file):
         return True, "Работа пересдана."
     new_id = get_next_id(ws)
     history = f"{now} — сдано (на проверке)"
-    ws.append_row(
-        [new_id, topic_id, student_name, student_class, uploaded_file.name, drive_id, link or "",
-         "на проверке", "", now, now, history, ""],
-        value_input_option="USER_ENTERED",
-    )
+    ws.append_row([new_id, topic_id, student_name, student_class, uploaded_file.name, drive_id, link or "",
+         "на проверке", "", now, now, history, ""], value_input_option="USER_ENTERED")
     log_action(student_name, "сдана работа", f"topic_id={topic_id}")
     try:
         award_badge(student_name, "first_submit", student_class, details=str(topic_id))
@@ -716,9 +721,7 @@ def update_submission_status(sub_id, status, comment=""):
         log_action("учитель", f"статус → {status}", f"submission_id={sub_id}")
         if status == "принято":
             try:
-                sname = vals[2] if len(vals) > 2 else ""
-                sclass = vals[3] if len(vals) > 3 else ""
-                award_badge(sname, "accepted", sclass, details=f"submission_id={sub_id}")
+                award_badge(vals[2] if len(vals) > 2 else "", "accepted", vals[3] if len(vals) > 3 else "", details=f"submission_id={sub_id}")
             except Exception:
                 pass
 
@@ -751,6 +754,10 @@ def add_question(student_name, student_class, question, topic_title=""):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     ws.append_row([new_id, student_name, student_class or "", topic_title or "", question, "", "новый", now, ""], value_input_option="USER_ENTERED")
     log_action(student_name, "вопрос учителю", question[:80])
+    try:
+        award_badge(student_name, "question", student_class or "", details=question[:60])
+    except Exception:
+        pass
     return True, "Вопрос отправлен учителю"
 
 
@@ -912,10 +919,7 @@ def award_badge(student_name, badge_code, student_class="", details=""):
     ws = ensure_worksheet("achievements")
     new_id = get_next_id(ws)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    ws.append_row(
-        [new_id, student_name, student_class or "", badge_code, meta["points"], now, details or ""],
-        value_input_option="USER_ENTERED",
-    )
+    ws.append_row([new_id, student_name, student_class or "", badge_code, meta["points"], now, details or ""], value_input_option="USER_ENTERED")
     try:
         log_action(student_name, f"значок {badge_code}", meta["title"])
     except Exception:
@@ -942,18 +946,10 @@ def get_student_achievements(student_name):
             pts = int(float(str(r.get("points", meta.get("points", 0)) or 0)))
         except (TypeError, ValueError):
             pts = meta.get("points", 0)
-        result.append({
-            "id": r.get("id", ""),
-            "student_name": student_name,
-            "student_class": str(r.get("student_class", "") or ""),
-            "badge_code": code,
-            "points": pts,
-            "earned_at": str(r.get("earned_at", "") or ""),
-            "details": str(r.get("details", "") or ""),
-            "icon": meta.get("icon", "🏅"),
-            "title": meta.get("title", code),
-            "description": meta.get("description", ""),
-        })
+        result.append({"id": r.get("id", ""), "student_name": student_name, "student_class": str(r.get("student_class", "") or ""),
+                       "badge_code": code, "points": pts, "earned_at": str(r.get("earned_at", "") or ""),
+                       "details": str(r.get("details", "") or ""), "icon": meta.get("icon", "🏅"),
+                       "title": meta.get("title", code), "description": meta.get("description", "")})
     result.sort(key=lambda x: x["earned_at"])
     return result
 
@@ -966,16 +962,64 @@ def get_badge_progress(student_name):
     earned = {a["badge_code"]: a for a in get_student_achievements(student_name)}
     progress = []
     for code, meta in BADGES.items():
-        progress.append({
-            "badge_code": code,
-            "icon": meta["icon"],
-            "title": meta["title"],
-            "description": meta["description"],
-            "points": meta["points"],
-            "earned": code in earned,
-            "earned_at": earned[code]["earned_at"] if code in earned else "",
-        })
+        progress.append({"badge_code": code, "icon": meta["icon"], "title": meta["title"], "description": meta["description"],
+                         "points": meta["points"], "earned": code in earned,
+                         "earned_at": earned[code]["earned_at"] if code in earned else ""})
     return progress
+
+
+def get_student_level(student_name):
+    pts = get_student_points(student_name)
+    current = LEVELS[0]
+    for lv in LEVELS:
+        if pts >= lv["min_points"]:
+            current = lv
+    next_lv = None
+    for lv in LEVELS:
+        if lv["min_points"] > pts:
+            next_lv = lv
+            break
+    if next_lv:
+        need = next_lv["min_points"] - pts
+        span = next_lv["min_points"] - current["min_points"]
+        progress_pct = int(100 * (pts - current["min_points"]) / span) if span > 0 else 100
+    else:
+        need = 0
+        progress_pct = 100
+    return {"points": pts, "level": current["level"], "title": current["title"], "icon": current["icon"],
+            "next_level": next_lv["level"] if next_lv else None, "next_title": next_lv["title"] if next_lv else None,
+            "next_icon": next_lv["icon"] if next_lv else None, "points_to_next": need,
+            "progress_pct": min(100, max(0, progress_pct))}
+
+
+def get_next_steps(student_name):
+    earned = {a["badge_code"] for a in get_student_achievements(student_name)}
+    steps = []
+    order = [
+        ("topic", "Выберите и забронируйте тему проекта"),
+        ("first_submit", "Сдайте работу на проверку (вкладка «Сдать работу»)"),
+        ("revision", "Если учитель отправил на доработку — исправьте и пересдайте"),
+        ("accepted", "Дождитесь статуса «принято»"),
+        ("question", "Можно задать вопрос учителю во вкладке «Вопрос учителю»"),
+    ]
+    for code, text in order:
+        if code not in earned:
+            meta = BADGES.get(code, {})
+            steps.append({"badge_code": code, "icon": meta.get("icon", "•"), "text": text, "points": meta.get("points", 0)})
+    return steps[:3]
+
+
+def teacher_award_badge(student_name, badge_code, student_class="", details=""):
+    student_name = (student_name or "").strip()
+    badge_code = (badge_code or "").strip()
+    if not student_name:
+        return False, "Укажите ФИО ученика"
+    if badge_code not in BADGES:
+        return False, "Неизвестный значок"
+    ok, meta = award_badge(student_name, badge_code, student_class, details or "вручную учителем")
+    if not ok:
+        return False, f"У «{student_name}» уже есть этот значок"
+    return True, f"Выдано: {meta['icon']} {meta['title']} (+{meta['points']}) — {student_name}"
 
 
 def topics_to_csv(topics):
