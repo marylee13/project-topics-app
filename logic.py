@@ -26,6 +26,7 @@ HEADERS = {
                   "status", "created_at", "answered_at"],
     "announcements": ["id", "title", "text", "is_active", "created_at", "updated_at"],
     "achievements": ["id", "student_name", "student_class", "badge_code", "points", "earned_at", "details"],
+    "class_settings": ["class_name", "student_count", "bonus_awarded", "earned_at", "selected_count"],
     "action_log": ["id", "timestamp", "actor", "action", "details"],
 }
 
@@ -53,6 +54,12 @@ BADGES = {
         "title": "Принято",
         "description": "Работа принята учителем",
         "points": 30,
+    },
+    "early": {
+        "icon": "⚡",
+        "title": "Ранее срока",
+        "description": "Отправили первую версию проекта до дедлайна",
+        "points": 10,
     },
     "question": {
         "icon": "💬",
@@ -396,7 +403,7 @@ def get_student_booking(student_name):
     return None
 
 
-def book_topic(topic_id, student_name, sheet_row=None, expected_title=""):
+def book_topic(topic_id, student_name, sheet_row=None, expected_title="", student_class=""):
     student_name = (student_name or "").strip()
     if not student_name:
         return False, "Укажите ФИО"
@@ -454,7 +461,7 @@ def book_topic(topic_id, student_name, sheet_row=None, expected_title=""):
     log_action(student_name, "бронь темы", f"row={row_num}, title={title}")
     get_topics_cached.clear()
     try:
-        award_badge(student_name, "topic", details=title)
+        award_badge(student_name, "topic", student_class, details=title)
     except Exception:
         pass
     return True, f"Тема «{title}» забронирована!"
@@ -665,6 +672,18 @@ def submit_work(topic_id, student_name, student_class, uploaded_file):
     log_action(student_name, "сдана работа", f"topic_id={topic_id}")
     try:
         award_badge(student_name, "first_submit", student_class, details=str(topic_id))
+        topic = next((t for t in get_topics_cached() if str(t.get("id")) == str(topic_id)), None)
+        if topic and topic.get("deadline"):
+            deadline_raw = str(topic["deadline"]).strip()
+            deadline = None
+            for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
+                try:
+                    deadline = datetime.strptime(deadline_raw, fmt).date()
+                    break
+                except ValueError:
+                    continue
+            if deadline and datetime.now().date() <= deadline:
+                award_badge(student_name, "early", student_class, details=f"Сдано {now}, дедлайн {deadline_raw}")
     except Exception:
         pass
     return True, "Работа успешно отправлена!"
