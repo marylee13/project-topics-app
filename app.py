@@ -1,4 +1,5 @@
 import streamlit as st
+import gamification as game
 from logic import (
     init_sheets, get_topics, get_topics_cached, get_student_booking, book_topic, unbook_topic,
     delete_topic, update_topic, add_topic, add_topics_bulk,
@@ -43,7 +44,7 @@ def product_tip(product: str) -> str:
 
 def _book(topic, student_name):
     try:
-        return book_topic(topic["id"], student_name, sheet_row=topic.get("sheet_row"), expected_title=topic.get("title") or "")
+        return book_topic(topic["id"], student_name, sheet_row=topic.get("sheet_row"), expected_title=topic.get("title") or "", student_class=st.session_state.get("student_class", ""))
     except TypeError:
         return book_topic(topic["id"], student_name)
 
@@ -239,6 +240,23 @@ if role == "Ученик":
                         else:
                             st.info(f"⬜ {p['icon']} {p['title']}")
 
+            st.markdown("#### 🧭 Прогресс проекта")
+            project_steps = game.get_project_steps(name)
+            step_cols = st.columns(4)
+            for idx, step in enumerate(project_steps):
+                with step_cols[idx]:
+                    st.markdown(("✅ " if step["done"] else "⬜ ") + f"**{idx + 1}. {step['label']}**")
+                    st.caption("Выполнено" if step["done"] else step["hint"])
+            st.progress(sum(1 for step in project_steps if step["done"]) / 4)
+
+            st.markdown("#### 🏆 Рейтинг класса")
+            class_board = game.get_class_leaderboard(st.session_state.get("student_class", ""))
+            if class_board:
+                for entry in class_board:
+                    st.caption(f"{entry['rank']}. {entry['student_name']} — {entry['points']} баллов · {entry['badges']} значков")
+            else:
+                st.caption("Рейтинг появится, когда ученики начнут получать достижения.")
+
             st.markdown("#### Работы и история статусов")
             subs = get_student_submissions(name)
             if not subs:
@@ -252,6 +270,9 @@ if role == "Ученик":
                             st.info(f"Комментарий: {s['teacher_comment']}")
                         if s["drive_link"]:
                             st.markdown(f"[📂 Текущий файл]({s['drive_link']})")
+                        if s["status"] == "принято":
+                            cert = game.make_certificate_png(name, st.session_state.get("student_class", s.get("student_class", "")), s["title"], s.get("updated_at", ""))
+                            st.download_button("🎓 Скачать сертификат проекта", data=cert, file_name="sertifikat_proekta.png", mime="image/png", key=f"cert_{s['id']}")
                         hist = (s.get("status_history") or "").strip()
                         if hist:
                             st.markdown("**История статусов**")
@@ -318,6 +339,13 @@ else:
     if st.sidebar.button("Выйти"):
         st.session_state.teacher_logged_in = False
         st.rerun()
+
+    teacher_stats = game.get_teacher_stats()
+    st.subheader("📊 Сводка по проектам")
+    stat_cols = st.columns(5)
+    for col, label, value in zip(stat_cols, ["Темы", "Брони", "Ученики", "Работы", "Принято"], [teacher_stats["topics"], teacher_stats["booked_topics"], teacher_stats["students"], teacher_stats["submissions"], teacher_stats["accepted"]]):
+        col.metric(label, value)
+    st.caption(f"На проверке: {teacher_stats['pending']} · На доработке: {teacher_stats['revision']}")
 
     tab_t1, tab_t2, tab_t3, tab_t4, tab_t5, tab_t6, tab_t7, tab_t8, tab_t9 = st.tabs([
         "Работы", "Темы", "Добавить темы", "Материалы", "Объявления", "Вопросы", "Значки", "Экспорт", "Лог",
@@ -512,6 +540,27 @@ else:
         st.markdown("#### Уровни")
         for lv in LEVELS:
             st.caption(f"{lv['icon']} Уровень {lv['level']}: **{lv['title']}** — от {lv['min_points']} баллов")
+        st.divider()
+        st.markdown("#### Командная цель класса")
+        st.caption("Укажите фактическую численность каждого класса. Когда тему выберут 80% учеников, класс получит общий значок.")
+        for class_name in CLASSES:
+            current = game.get_class_progress(class_name)
+            with st.expander(f"{class_name} · {current['selected_count']}/{current['student_count'] or '—'} выбрали тему"):
+                size = st.number_input("Всего учеников в классе", min_value=1, max_value=50, value=max(1, current["student_count"]), key=f"class_size_{class_name}")
+                if st.button("Сохранить численность", key=f"save_class_{class_name}"):
+                    ok, msg = game.set_class_size(class_name, size)
+                    st.success(msg) if ok else st.error(msg)
+                    st.rerun()
+                if current["configured"]:
+                    st.progress(current["percent"] / 100)
+                    st.caption(f"{current['percent']}% выбрали тему")
+                    if current["awarded"]:
+                        st.success("🏆 Командный значок класса получен!")
+                    else:
+                        needed = int(current["student_count"] * 0.8 + 0.999)
+                        st.info(f"До общего значка осталось: {max(0, needed - current['selected_count'])} учен.")
+                else:
+                    st.caption("Сначала сохраните численность класса.")
 
     with tab_t8:
         all_topics = get_topics(); all_subs = get_submissions()
