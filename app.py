@@ -76,14 +76,6 @@ role = st.sidebar.radio("Кто вы?", ["Ученик", "Учитель"])
 if role == "Ученик":
     st.title("Бронирование темы проекта")
 
-    anns = get_announcements(only_active=True)
-    if anns:
-        st.markdown("### 📢 Объявления")
-        for a in anns:
-            st.warning(f"**{a['title']}**\n\n{a['text']}")
-            if a.get("updated_at") or a.get("created_at"):
-                st.caption(f"от учителя · {a.get('updated_at') or a.get('created_at')}")
-
     col_a, col_b = st.columns(2)
     with col_a:
         student_name = st.text_input("Ваше ФИО (обязательно)", key="student_name")
@@ -439,7 +431,7 @@ else:
 
     with tab_t5:
         st.subheader("📢 Объявления для учеников")
-        st.caption("Активные объявления показываются вверху страницы у всех учеников.")
+        st.caption("Активные объявления показываются в боковой панели слева.")
         with st.form("add_ann", clear_on_submit=True):
             at = st.text_input("Заголовок")
             ax = st.text_area("Текст объявления", height=120)
@@ -517,4 +509,16 @@ else:
             st.text(f"{L['timestamp']} | {L['actor']} | {L['action']} | {L['details']}")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Google Таблицы и Диск")
+try:
+    _anns = get_announcements(only_active=True)
+except Exception:
+    _anns = []
+if _anns:
+    st.sidebar.markdown("### 📢 Объявления")
+    for a in _anns:
+        st.sidebar.info(f"**{a['title']}**\n\n{a['text']}")
+        if a.get("updated_at") or a.get("created_at"):
+            st.sidebar.caption(a.get("updated_at") or a.get("created_at"))
+else:
+    st.sidebar.caption("Объявлений пока нет")
+st.sidebar.caption("Данные: Google Таблицы и Диск")
