@@ -42,9 +42,9 @@ def product_tip(product: str) -> str:
             return tip
     return "Укажите цель, для кого продукт, 3–5 фактов и понятный вывод."
 
-def _book(topic, student_name):
+def _book(topic, student_name, student_class=""):
     try:
-        return book_topic(topic["id"], student_name, sheet_row=topic.get("sheet_row"), expected_title=topic.get("title") or "", student_class=st.session_state.get("student_class", ""))
+        return book_topic(topic["id"], student_name, sheet_row=topic.get("sheet_row"), expected_title=topic.get("title") or "", student_class=student_class or st.session_state.get("student_class", ""))
     except TypeError:
         return book_topic(topic["id"], student_name)
 
@@ -161,7 +161,7 @@ if role == "Ученик":
                                 if not student_name:
                                     st.warning("Сначала введите ФИО")
                                 else:
-                                    ok, msg = _book(t, student_name)
+                                    ok, msg = _book(t, student_name, student_class)
                                     if ok: st.success(msg); st.rerun()
                                     else: st.error(msg)
 
@@ -248,6 +248,14 @@ if role == "Ученик":
                     st.markdown(("✅ " if step["done"] else "⬜ ") + f"**{idx + 1}. {step['label']}**")
                     st.caption("Выполнено" if step["done"] else step["hint"])
             st.progress(sum(1 for step in project_steps if step["done"]) / 4)
+
+            class_progress = game.get_class_progress(st.session_state.get("student_class", ""))
+            if class_progress["configured"]:
+                st.markdown("#### 🤝 Командная цель класса")
+                st.progress(class_progress["percent"] / 100)
+                st.caption(f"{class_progress['selected_count']} из {class_progress['student_count']} учеников выбрали тему · {class_progress['percent']}%")
+                if class_progress["awarded"]:
+                    st.success("🏆 Ваш класс получил общий значок «Команда исследователей»!")
 
             st.markdown("#### 🏆 Рейтинг класса")
             class_board = game.get_class_leaderboard(st.session_state.get("student_class", ""))
@@ -406,7 +414,7 @@ else:
                 tb_label = st.selectbox("Тема", list(options.keys()))
                 if st.form_submit_button("Забронировать", type="primary"):
                     if tb_name.strip():
-                        ok, msg = _book(options[tb_label], tb_name.strip())
+                        ok, msg = _book(options[tb_label], tb_name.strip(), tb_class)
                         st.success(msg) if ok else st.error(msg)
                         if ok: st.rerun()
         st.divider()
