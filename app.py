@@ -348,12 +348,25 @@ else:
         st.session_state.teacher_logged_in = False
         st.rerun()
 
-    teacher_stats = game.get_teacher_stats()
+    try:
+        teacher_stats = game.get_teacher_stats()
+    except Exception as e:
+        teacher_stats = {
+            "topics": 0, "booked_topics": 0, "students": 0, "submissions": 0,
+            "accepted": 0, "revision": 0, "pending": 0, "error": str(e),
+        }
     st.subheader("📊 Сводка по проектам")
-    stat_cols = st.columns(5)
-    for col, label, value in zip(stat_cols, ["Темы", "Брони", "Ученики", "Работы", "Принято"], [teacher_stats["topics"], teacher_stats["booked_topics"], teacher_stats["students"], teacher_stats["submissions"], teacher_stats["accepted"]]):
-        col.metric(label, value)
-    st.caption(f"На проверке: {teacher_stats['pending']} · На доработке: {teacher_stats['revision']}")
+    if teacher_stats.get("error"):
+        err = teacher_stats["error"]
+        if "429" in err or "Quota" in err:
+            st.warning("⏳ Лимит Google API. Подождите 1–2 минуты и обновите страницу один раз. Сводка временно недоступна.")
+        else:
+            st.warning(f"Не удалось загрузить сводку (Google Sheets). Подождите минуту и обновите. Подробности: {err[:180]}")
+    else:
+        stat_cols = st.columns(5)
+        for col, label, value in zip(stat_cols, ["Темы", "Брони", "Ученики", "Работы", "Принято"], [teacher_stats["topics"], teacher_stats["booked_topics"], teacher_stats["students"], teacher_stats["submissions"], teacher_stats["accepted"]]):
+            col.metric(label, value)
+        st.caption(f"На проверке: {teacher_stats['pending']} · На доработке: {teacher_stats['revision']}")
 
     tab_t1, tab_t2, tab_t3, tab_t4, tab_t5, tab_t6, tab_t7, tab_t8, tab_t9 = st.tabs([
         "Работы", "Темы", "Добавить темы", "Материалы", "Объявления", "Вопросы", "Значки", "Экспорт", "Лог",
@@ -366,7 +379,11 @@ else:
             filter_status = st.selectbox("Статус", ["Все", "на проверке", "на доработке", "принято"])
         with c2:
             sub_search = st.text_input("Поиск", key="sub_search")
-        subs = get_submissions(search=sub_search or None) if filter_status == "Все" else get_submissions(status=filter_status, search=sub_search or None)
+        try:
+            subs = get_submissions(search=sub_search or None) if filter_status == "Все" else get_submissions(status=filter_status, search=sub_search or None)
+        except Exception as e:
+            st.warning(f"Не удалось загрузить работы: {str(e)[:180]}")
+            subs = []
         if not subs:
             st.info("Нет работ.")
         else:
@@ -390,7 +407,11 @@ else:
         st.subheader("🔓 Снять бронь")
         if st.button("🔄 Обновить брони", key="refresh_booked"):
             get_topics_cached.clear(); st.rerun()
-        booked = [t for t in get_topics() if t.get("is_booked") == 1]
+        try:
+            booked = [t for t in get_topics() if t.get("is_booked") == 1]
+        except Exception as e:
+            st.warning(f"Не удалось загрузить темы: {str(e)[:180]}")
+            booked = []
         if not booked:
             st.info("Нет занятых тем.")
         else:
@@ -405,7 +426,10 @@ else:
                         st.rerun()
         st.divider()
         st.subheader("Забронировать за ученика")
-        free_topics = get_topics(only_free=True)
+        try:
+            free_topics = get_topics(only_free=True)
+        except Exception:
+            free_topics = []
         if free_topics:
             with st.form("teacher_book_form"):
                 tb_name = st.text_input("ФИО")
@@ -421,7 +445,12 @@ else:
         st.subheader("Управление темами")
         if st.button("🔄 Обновить список", key="refresh_all_topics"):
             get_topics_cached.clear(); st.rerun()
-        for t in get_topics():
+        try:
+            topics = get_topics()
+        except Exception as e:
+            st.warning(f"Не удалось загрузить темы: {str(e)[:180]}")
+            topics = []
+        for t in topics:
             status = "🔴" if t["is_booked"] else "🟢"
             with st.expander(f"{status} {t['subject']} — {t['title']}"):
                 if t["is_booked"] and st.button("🔓 Снять бронь", key=f"unbook_r{t.get('sheet_row', t['id'])}"):
@@ -542,36 +571,31 @@ else:
                 ok, msg = teacher_award_badge(aw_name.strip(), badge_labels[aw_badge_label], aw_class, aw_details.strip())
                 if ok: st.success(msg); st.rerun()
                 else: st.error(msg)
+        st.markdown("#### Численность класса (для командного бонуса 80%)")
+        with st.form("class_size_form"):
+            cs_class = st.selectbox("Класс", CLASSES, key="cs_class")
+            cs_count = st.number_input("Сколько учеников в классе", min_value=1, max_value=40, value=25)
+            if st.form_submit_button("Сохранить численность"):
+                ok, msg = game.set_class_size(cs_class, cs_count)
+                st.success(msg) if ok else st.error(msg)
+                if ok: st.rerun()
+        st.markdown("#### Командная цель класса")
+        for cls in CLASSES:
+            prog = game.get_class_progress(cls)
+            if prog["configured"]:
+                st.caption(f"{cls}: {prog['selected_count']}/{prog['student_count']} ({prog['percent']}%)" + (" · 🏆 бонус получен" if prog["awarded"] else ""))
         st.markdown("#### Справка по значкам")
         for code, m in BADGES.items():
-            st.caption(f"{m['icon']} **{m['title']}** — {m['description']} _(+{m['points']})_)")
+            st.caption(f"{m['icon']} **{m['title']}** — {m['description']} _(+{m['points']})_")
         st.markdown("#### Уровни")
         for lv in LEVELS:
             st.caption(f"{lv['icon']} Уровень {lv['level']}: **{lv['title']}** — от {lv['min_points']} баллов")
-        st.divider()
-        st.markdown("#### Командная цель класса")
-        st.caption("Укажите фактическую численность каждого класса. Когда тему выберут 80% учеников, класс получит общий значок.")
-        for class_name in CLASSES:
-            current = game.get_class_progress(class_name)
-            with st.expander(f"{class_name} · {current['selected_count']}/{current['student_count'] or '—'} выбрали тему"):
-                size = st.number_input("Всего учеников в классе", min_value=1, max_value=50, value=max(1, current["student_count"]), key=f"class_size_{class_name}")
-                if st.button("Сохранить численность", key=f"save_class_{class_name}"):
-                    ok, msg = game.set_class_size(class_name, size)
-                    st.success(msg) if ok else st.error(msg)
-                    st.rerun()
-                if current["configured"]:
-                    st.progress(current["percent"] / 100)
-                    st.caption(f"{current['percent']}% выбрали тему")
-                    if current["awarded"]:
-                        st.success("🏆 Командный значок класса получен!")
-                    else:
-                        needed = int(current["student_count"] * 0.8 + 0.999)
-                        st.info(f"До общего значка осталось: {max(0, needed - current['selected_count'])} учен.")
-                else:
-                    st.caption("Сначала сохраните численность класса.")
 
     with tab_t8:
-        all_topics = get_topics(); all_subs = get_submissions()
+        try:
+            all_topics = get_topics(); all_subs = get_submissions()
+        except Exception as e:
+            st.warning(str(e)[:200]); all_topics, all_subs = [], []
         st.download_button("Темы CSV", data=topics_to_csv(all_topics), file_name="topics.csv", mime="text/csv")
         st.download_button("Работы CSV", data=submissions_to_csv(all_subs), file_name="subs.csv", mime="text/csv")
         st.metric("Тем", len(all_topics)); st.metric("Работ", len(all_subs)); st.metric("Вопросов", len(get_questions()))
