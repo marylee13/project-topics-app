@@ -138,7 +138,6 @@ def get_drive_folder_id():
 
 
 @st.cache_resource
-
 def ensure_worksheet(name):
     ss = get_spreadsheet()
     try:
@@ -312,7 +311,7 @@ def log_action(actor, action, details=""):
 
 def add_topic(grade, subject, title, product, deadline=""):
     ss = get_spreadsheet()
-    ws = ss.worksheet("topics")
+    ws = ensure_worksheet("topics")
     new_id = get_next_id(ws)
     ws.append_row([new_id, grade, subject, title, product, 0, "", "", deadline or ""], value_input_option="USER_ENTERED")
     try:
