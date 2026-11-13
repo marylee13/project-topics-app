@@ -184,10 +184,38 @@ def ensure_all_sheets():
     return True
 
 
-def safe_get_all_values(ws, retries=4):
+@st.cache_data(ttl=8, show_spinner=False)
+def _cached_sheet_values(sheet_title):
+    """Share a short-lived read cache across reruns and users."""
+    ws = ensure_worksheet(sheet_title)
+    return ws.get_all_values()
+
+
+def clear_sheet_read_cache():
+    """Invalidate cached worksheet snapshots after a successful write."""
+    _cached_sheet_values.clear()
+
+
+def safe_get_all_values(ws, retries=4, force_refresh=False):
+    if not force_refresh:
+        try:
+            return _cached_sheet_values(ws.title)
+        except Exception as e:
+            last_err = e
+            # Retry quota/transient errors without caching the failure.
+            for attempt in range(retries - 1):
+                wait = 20 * (attempt + 1) if ("429" in str(last_err) or "Quota" in str(last_err)) else 2 * (attempt + 1)
+                time.sleep(wait)
+                try:
+                    clear_sheet_read_cache()
+                    return _cached_sheet_values(ws.title)
+                except Exception as retry_error:
+                    last_err = retry_error
+            raise last_err
     last_err = None
     for attempt in range(retries):
         try:
+            clear_sheet_read_cache()
             return ws.get_all_values()
         except Exception as e:
             last_err = e
@@ -220,7 +248,7 @@ def rows_to_records(values, expected_headers=None):
 
 
 def get_next_id(ws):
-    values = safe_get_all_values(ws)
+    values = safe_get_all_values(ws, force_refresh=True)
     records = rows_to_records(values)
     if not records:
         return 1
@@ -245,7 +273,7 @@ def _ids_equal(a, b):
 
 def find_row_by_id(ws, row_id):
     try:
-        values = safe_get_all_values(ws)
+        values = safe_get_all_values(ws, force_refresh=True)
         for i, row in enumerate(values):
             if i == 0 or not row:
                 continue
@@ -412,7 +440,7 @@ def book_topic(topic_id, student_name, sheet_row=None, expected_title="", studen
         return False, f"У вас уже забронирована тема: «{existing['title']}»"
     ss = get_spreadsheet()
     ws = ss.worksheet("topics")
-    values = safe_get_all_values(ws)
+    values = safe_get_all_values(ws, force_refresh=True)
     if not values:
         return False, "Лист topics пуст"
     headers = [str(h).strip().lower() for h in values[0]]
@@ -459,6 +487,7 @@ def book_topic(topic_id, student_name, sheet_row=None, expected_title="", studen
         ws.update(rowcol_to_a1(row_num, i_by + 1), [[student_name]], value_input_option="USER_ENTERED")
         ws.update(rowcol_to_a1(row_num, i_at + 1), [[now]], value_input_option="USER_ENTERED")
     log_action(student_name, "бронь темы", f"row={row_num}, title={title}")
+    clear_sheet_read_cache()
     get_topics_cached.clear()
     try:
         award_badge(student_name, "topic", student_class, details=title)
@@ -511,6 +540,7 @@ def unbook_topic(topic_id, actor="учитель", sheet_row=None, expected_titl
         ws.update(rowcol_to_a1(row_num, i_by + 1), [[""]], value_input_option="USER_ENTERED")
         ws.update(rowcol_to_a1(row_num, i_at + 1), [[""]], value_input_option="USER_ENTERED")
     log_action(actor, "снята бронь", f"row={row_num}, title={title}, was={was_by}")
+    clear_sheet_read_cache()
     get_topics_cached.clear()
     return True, f"Бронь снята с темы «{title or topic_id}»"
 
@@ -626,7 +656,7 @@ def delete_material(mat_id):
 
 
 def _find_submission_row(ws, topic_id, student_name):
-    values = safe_get_all_values(ws)
+    values = safe_get_all_values(ws, force_refresh=True)
     for i, row in enumerate(values):
         if i == 0 or len(row) < 3:
             continue
@@ -655,6 +685,7 @@ def submit_work(topic_id, student_name, student_class, uploaded_file):
         history = (old_history + f"\n{now} — пересдано (на проверке)").strip()
         ws.update(f"B{row_num}:M{row_num}", [[topic_id, student_name, student_class, uploaded_file.name, drive_id, link or "",
               "на проверке", "", old[9] if len(old) > 9 else now, now, history, versions]], value_input_option="USER_ENTERED")
+        clear_sheet_read_cache()
         log_action(student_name, "пересдача работы", f"topic_id={topic_id}")
         try:
             old_status = (old[7] if len(old) > 7 else "").strip()
@@ -669,6 +700,7 @@ def submit_work(topic_id, student_name, student_class, uploaded_file):
     history = f"{now} — сдано (на проверке)"
     ws.append_row([new_id, topic_id, student_name, student_class, uploaded_file.name, drive_id, link or "",
          "на проверке", "", now, now, history, ""], value_input_option="USER_ENTERED")
+    clear_sheet_read_cache()
     log_action(student_name, "сдана работа", f"topic_id={topic_id}")
     try:
         award_badge(student_name, "first_submit", student_class, details=str(topic_id))
@@ -737,6 +769,7 @@ def update_submission_status(sub_id, status, comment=""):
         note = f" — {comment[:80]}" if comment else ""
         history = (history + f"\n{now} — {status}{note}").strip()
         ws.update(f"H{row}:L{row}", [[status, comment, submitted, now, history]], value_input_option="USER_ENTERED")
+        clear_sheet_read_cache()
         log_action("учитель", f"статус → {status}", f"submission_id={sub_id}")
         if status == "принято":
             try:
@@ -939,6 +972,7 @@ def award_badge(student_name, badge_code, student_class="", details=""):
     new_id = get_next_id(ws)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     ws.append_row([new_id, student_name, student_class or "", badge_code, meta["points"], now, details or ""], value_input_option="USER_ENTERED")
+    clear_sheet_read_cache()
     try:
         log_action(student_name, f"значок {badge_code}", meta["title"])
     except Exception:
