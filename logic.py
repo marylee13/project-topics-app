@@ -137,6 +137,8 @@ def get_drive_folder_id():
     return str(st.secrets["DRIVE_FOLDER_ID"]).strip()
 
 
+@st.cache_resource
+
 def ensure_worksheet(name):
     ss = get_spreadsheet()
     try:
@@ -184,7 +186,7 @@ def ensure_all_sheets():
     return True
 
 
-@st.cache_data(ttl=8, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def _cached_sheet_values(sheet_title):
     """Share a short-lived read cache across reruns and users."""
     ws = ensure_worksheet(sheet_title)
@@ -215,7 +217,6 @@ def safe_get_all_values(ws, retries=4, force_refresh=False):
     last_err = None
     for attempt in range(retries):
         try:
-            clear_sheet_read_cache()
             return ws.get_all_values()
         except Exception as e:
             last_err = e
@@ -386,7 +387,7 @@ def _normalize_topic_row(r, row_index):
 @st.cache_data(ttl=20, show_spinner=False)
 def get_topics_cached():
     ss = get_spreadsheet()
-    ws = ss.worksheet("topics")
+    ws = ensure_worksheet("topics")
     values = safe_get_all_values(ws)
     if not values:
         return []
@@ -499,7 +500,7 @@ def book_topic(topic_id, student_name, sheet_row=None, expected_title="", studen
 def unbook_topic(topic_id, actor="учитель", sheet_row=None, expected_title=""):
     ss = get_spreadsheet()
     ws = ss.worksheet("topics")
-    values = safe_get_all_values(ws)
+    values = safe_get_all_values(ws, force_refresh=True)
     if not values:
         return False, "Лист topics пуст"
     headers = [str(h).strip().lower() for h in values[0]]
