@@ -9,6 +9,7 @@ import io
 import re
 import csv
 import time
+import logging
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -595,6 +596,11 @@ def upload_file_to_drive(uploaded_file, prefix="file"):
         file = drive_service.files().create(body=body, media_body=media, fields="id, webViewLink", supportsAllDrives=True).execute(num_retries=2)
         return file.get("id"), file.get("webViewLink"), filename
     except Exception as e:
+        logging.exception(
+            "Google Drive upload failed (prefix=%s, size_bytes=%s)",
+            prefix,
+            len(data),
+        )
         raise RuntimeError("Не удалось загрузить в Drive. Опубликуйте файл по ссылке.") from e
 
 
