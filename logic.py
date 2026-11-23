@@ -518,7 +518,8 @@ def book_topic(topic_id, student_name, sheet_row=None, expected_title="", studen
     return True, f"Тема «{title}» забронирована!"
 
 
-def unbook_topic(topic_id, actor="учитель", sheet_row=None, expected_title=""):    ss = get_spreadsheet()
+def unbook_topic(topic_id, actor="учитель", sheet_row=None, expected_title=""):
+    ss = get_spreadsheet()
     ws = ss.worksheet("topics")
     values = safe_get_all_values(ws, force_refresh=True)
     if not values:
