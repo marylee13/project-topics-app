@@ -1,6 +1,8 @@
 import streamlit as st
 import gspread
-from google.oauth2.service_account import Credentials
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+from google.oauth2.credentials import Credentials as OAuthCredentials
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from gspread.utils import rowcol_to_a1
@@ -11,10 +13,8 @@ import csv
 import time
 import logging
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+DRIVE_OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive"]
 TEACHER_PASSWORD = "marylee_13"
 
 HEADERS = {
@@ -93,21 +93,43 @@ LEVELS = [
 
 @st.cache_resource
 def get_google_clients():
+    """Google Sheets client remains authenticated with the service account."""
     try:
         creds_info = dict(st.secrets["gcp_service_account"])
-        credentials = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
-        gc = gspread.authorize(credentials)
-        drive_service = build("drive", "v3", credentials=credentials)
-        return gc, drive_service
+        credentials = ServiceAccountCredentials.from_service_account_info(creds_info, scopes=SCOPES)
+        return gspread.authorize(credentials)
     except Exception as e:
-        st.error("Ошибка подключения к Google. Проверьте Secrets.")
+        st.error("Ошибка подключения к Google Таблицам. Проверьте Secrets.")
         st.exception(e)
         st.stop()
 
 
 @st.cache_resource
+def get_drive_service():
+    """Use the user's OAuth refresh token for uploads to a personal Google Drive."""
+    try:
+        oauth_info = dict(st.secrets["google_drive_oauth"])
+        credentials = OAuthCredentials(
+            token=None,
+            refresh_token=str(oauth_info["refresh_token"]).strip(),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=str(oauth_info["client_id"]).strip(),
+            client_secret=str(oauth_info["client_secret"]).strip(),
+            scopes=DRIVE_OAUTH_SCOPES,
+        )
+        credentials.refresh(Request())
+        return build("drive", "v3", credentials=credentials)
+    except Exception as e:
+        logging.exception("Google Drive OAuth initialization failed")
+        raise RuntimeError(
+            "Не удалось подключить Google Drive. Проверьте google_drive_oauth в Secrets "
+            "и убедитесь, что OAuth-токен действителен."
+        ) from e
+
+
+@st.cache_resource
 def _open_spreadsheet():
-    gc, _ = get_google_clients()
+    gc = get_google_clients()
     sheet_id = str(st.secrets["SPREADSHEET_ID"]).strip()
     last_err = None
     for attempt in range(5):
@@ -246,7 +268,6 @@ def rows_to_records(values, expected_headers=None):
             rec[h] = row[i] if i < len(row) else ""
         records.append(rec)
     return records
-
 
 def get_next_id(ws):
     values = safe_get_all_values(ws, force_refresh=True)
@@ -497,8 +518,7 @@ def book_topic(topic_id, student_name, sheet_row=None, expected_title="", studen
     return True, f"Тема «{title}» забронирована!"
 
 
-def unbook_topic(topic_id, actor="учитель", sheet_row=None, expected_title=""):
-    ss = get_spreadsheet()
+def unbook_topic(topic_id, actor="учитель", sheet_row=None, expected_title=""):    ss = get_spreadsheet()
     ws = ss.worksheet("topics")
     values = safe_get_all_values(ws, force_refresh=True)
     if not values:
@@ -581,7 +601,7 @@ def _guess_mime(filename, fallback="application/octet-stream"):
 
 
 def upload_file_to_drive(uploaded_file, prefix="file"):
-    _, drive_service = get_google_clients()
+    drive_service = get_drive_service()
     folder_id = get_drive_folder_id().split("?")[0].strip().rstrip("/")
     if "/folders/" in folder_id:
         folder_id = folder_id.split("/folders/")[-1].split("/")[0].split("?")[0]
@@ -747,8 +767,7 @@ def get_submissions(status=None, search=None):
         topic = topics_map.get(tid, {})
         item = {"id": sid, "topic_id": tid, "student_name": str(r.get("student_name", "")), "student_class": str(r.get("student_class", "")),
                 "filename": str(r.get("filename", "")), "drive_file_id": str(r.get("drive_file_id", "")), "drive_link": str(r.get("drive_link", "")),
-                "status": str(r.get("status", "на проверке") or "на проверке"), "teacher_comment": str(r.get("teacher_comment", "") or ""),
-                "submitted_at": str(r.get("submitted_at", "")), "updated_at": str(r.get("updated_at", "")),
+                "status": str(r.get("status", "на проверке") or "на проверке"), "teacher_comment": str(r.get("teacher_comment", "") or ""),                "submitted_at": str(r.get("submitted_at", "")), "updated_at": str(r.get("updated_at", "")),
                 "status_history": str(r.get("status_history", "") or ""), "versions": str(r.get("versions", "") or ""),
                 "title": topic.get("title", "—"), "subject": topic.get("subject", "—"), "grade": topic.get("grade", "—"), "product": topic.get("product", "")}
         if status and item["status"] != status:
@@ -997,8 +1016,7 @@ def get_student_achievements(student_name):
         return []
     result = []
     for r in records:
-        if str(r.get("student_name", "") or "").strip() != student_name:
-            continue
+        if str(r.get("student_name", "") or "").strip() != student_name:            continue
         code = str(r.get("badge_code", "") or "").strip()
         meta = BADGES.get(code, {})
         try:
