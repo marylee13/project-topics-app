@@ -368,8 +368,8 @@ else:
             col.metric(label, value)
         st.caption(f"На проверке: {teacher_stats['pending']} · На доработке: {teacher_stats['revision']}")
 
-    tab_t1, tab_t2, tab_t3, tab_t4, tab_t5, tab_t6, tab_t7, tab_t8, tab_t9 = st.tabs([
-        "Работы", "Темы", "Добавить темы", "Материалы", "Объявления", "Вопросы", "Значки", "Экспорт", "Лог",
+    tab_t1, tab_t2, tab_t3, tab_t4, tab_t5, tab_t6, tab_t7, tab_t8, tab_t9, tab_t10 = st.tabs([
+        "Работы", "Темы", "Добавить темы", "Материалы", "Объявления", "Вопросы", "Значки", "Экспорт", "Лог", "Поиск",
     ])
 
     with tab_t1:
@@ -603,6 +603,74 @@ else:
     with tab_t9:
         for L in get_action_log(150):
             st.text(f"{L['timestamp']} | {L['actor']} | {L['action']} | {L['details']}")
+
+    with tab_t10:
+        st.subheader("🔎 Поиск по темам и ученикам")
+        st.caption("Ищите по названию темы, предмету или продукту. Для поиска ученика достаточно ввести часть фамилии.")
+        search_col1, search_col2 = st.columns(2)
+        with search_col1:
+            topic_query = st.text_input("Поиск по темам", placeholder="Например: биология, экология, проект")
+        with search_col2:
+            student_query = st.text_input("Поиск по фамилии ученика", placeholder="Введите фамилию или её часть")
+
+        if topic_query.strip():
+            st.markdown("#### Найденные темы")
+            try:
+                found_topics = get_topics(search=topic_query.strip())
+            except Exception as e:
+                st.warning(f"Не удалось выполнить поиск по темам: {str(e)[:160]}")
+                found_topics = []
+            if found_topics:
+                for t in found_topics:
+                    status = "🔴 занята" if t.get("is_booked") else "🟢 свободна"
+                    student_info = f" · Ученик: {t.get('booked_by')}" if t.get("booked_by") else ""
+                    st.write(f"**{t.get('subject', '—')} — {t.get('title', '—')}** · {status}{student_info}")
+                    if t.get("product"):
+                        st.caption(f"Продукт: {t['product']}")
+            else:
+                st.info("По этому запросу темы не найдены.")
+
+        if student_query.strip():
+            query = student_query.strip().casefold()
+            st.markdown("#### Найденные ученики")
+            try:
+                all_topics_for_search = get_topics()
+                all_submissions_for_search = get_submissions()
+                all_questions_for_search = get_questions()
+                matched_bookings = [t for t in all_topics_for_search
+                                    if t.get("is_booked") == 1 and query in str(t.get("booked_by", "")).casefold()]
+                matched_submissions = [s for s in all_submissions_for_search
+                                       if query in str(s.get("student_name", "")).casefold()]
+                matched_questions = [q for q in all_questions_for_search
+                                     if query in str(q.get("student_name", "")).casefold()]
+                matched_names = sorted({
+                    str(t.get("booked_by", "")).strip() for t in matched_bookings if t.get("booked_by")
+                } | {
+                    str(s.get("student_name", "")).strip() for s in matched_submissions if s.get("student_name")
+                } | {
+                    str(q.get("student_name", "")).strip() for q in matched_questions if q.get("student_name")
+                }, key=str.casefold)
+            except Exception as e:
+                st.warning(f"Не удалось выполнить поиск по ученикам: {str(e)[:160]}")
+                matched_bookings, matched_submissions, matched_questions, matched_names = [], [], [], []
+
+            if not matched_names:
+                st.info("Ученики с такой фамилией не найдены.")
+            else:
+                for student_name in matched_names:
+                    st.markdown(f"**👤 {student_name}**")
+                    student_bookings = [t for t in matched_bookings if t.get("booked_by", "").strip() == student_name]
+                    student_submissions = [s for s in matched_submissions if s.get("student_name", "").strip() == student_name]
+                    student_questions = [q for q in matched_questions if q.get("student_name", "").strip() == student_name]
+                    if student_bookings:
+                        for t in student_bookings:
+                            st.write(f"🔴 Забронирована тема: {t.get('subject', '—')} — {t.get('title', '—')} ({t.get('grade', 'класс не указан')})")
+                    if student_submissions:
+                        for s in student_submissions:
+                            st.write(f"📄 Работа: {s.get('title', '—')} · {s.get('subject', '—')} · статус: {s.get('status', '—')}")
+                    if student_questions:
+                        st.write(f"💬 Вопросов учителю: {len(student_questions)}")
+                    st.divider()
 
 st.sidebar.markdown("---")
 try:
