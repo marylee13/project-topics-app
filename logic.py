@@ -393,6 +393,7 @@ def _ensure_topic_detail_columns(ws):
         end_col = start_col + len(missing) - 1
         ws.update(f"{rowcol_to_a1(1, start_col)}:{rowcol_to_a1(1, end_col)}",
                   [missing], value_input_option="USER_ENTERED")
+        clear_sheet_read_cache()
 
 
 def _normalize_topic_row(r, row_index):
