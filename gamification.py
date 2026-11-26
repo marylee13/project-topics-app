@@ -160,6 +160,9 @@ def get_teacher_stats():
                 pass
     except Exception:
         pass
+    booked_students = {str(t.get("booked_by", "")).strip() for t in topics
+                       if t.get("is_booked") == 1 and t.get("booked_by")}
+    students_without_topic = max(0, configured_students - len(booked_students)) if configured_students else None
     return {
         "topics": len(topics),
         "booked_topics": sum(1 for t in topics if t.get("is_booked") == 1),
@@ -170,6 +173,7 @@ def get_teacher_stats():
         "pending": pending,
         "booked_without_submission": booked_without_submission,
         "configured_students": configured_students,
+        "students_without_topic": students_without_topic,
         "error": None,
     }
 
