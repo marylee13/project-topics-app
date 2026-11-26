@@ -169,6 +169,17 @@ if role == "Ученик":
                             if t.get("product"): extra.append(f"Продукт: {t['product']}")
                             if t.get("deadline"): extra.append(f"Дедлайн: {t['deadline']}")
                             st.caption(" | ".join(extra))
+                            detail_parts = [
+                                ("Описание", t.get("description")), ("Цель", t.get("goal")),
+                                ("Ожидаемый результат", t.get("expected_result")),
+                                ("Рекомендации", t.get("recommendations")), ("Критерии оценки", t.get("criteria")),
+                            ]
+                            if any(value for _, value in detail_parts):
+                                with st.expander("Подробнее о теме"):
+                                    for label, value in detail_parts:
+                                        if value:
+                                            st.markdown(f"**{label}:**")
+                                            st.write(value)
                         with c2:
                             if st.button("Забронировать", key=f"book_r{t.get('sheet_row', t['id'])}"):
                                 if not student_name:
@@ -517,8 +528,13 @@ else:
                     et = st.text_input("Тема", value=t["title"], key=f"et_{t['id']}")
                     ep = st.text_input("Продукт", value=t["product"] or "", key=f"ep_{t['id']}")
                     ed = st.text_input("Дедлайн", value=t["deadline"] or "", key=f"ed_{t['id']}")
+                    e_desc = st.text_area("Описание", value=t.get("description", ""), key=f"desc_{t['id']}")
+                    e_goal = st.text_area("Цель проекта", value=t.get("goal", ""), key=f"goal_{t['id']}")
+                    e_result = st.text_area("Ожидаемый результат", value=t.get("expected_result", ""), key=f"result_{t['id']}")
+                    e_recommend = st.text_area("Рекомендации", value=t.get("recommendations", ""), key=f"recommend_{t['id']}")
+                    e_criteria = st.text_area("Критерии оценки", value=t.get("criteria", ""), key=f"criteria_{t['id']}")
                     if st.form_submit_button("💾 Сохранить"):
-                        update_topic(t["id"], eg, es, et, ep, ed); st.rerun()
+                        update_topic(t["id"], eg, es, et, ep, ed, e_desc, e_goal, e_result, e_recommend, e_criteria); st.rerun()
 
     with tab_t3:
         st.subheader("Добавить тему")
