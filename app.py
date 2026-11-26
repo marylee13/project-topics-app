@@ -253,14 +253,44 @@ if role == "Ученик":
                         else:
                             st.info(f"⬜ {p['icon']} {p['title']}")
 
-            st.markdown("#### 🧭 Прогресс проекта")
-            project_steps = game.get_project_steps(name)
-            step_cols = st.columns(4)
-            for idx, step in enumerate(project_steps):
-                with step_cols[idx]:
-                    st.markdown(("✅ " if step["done"] else "⬜ ") + f"**{idx + 1}. {step['label']}**")
-                    st.caption("Выполнено" if step["done"] else step["hint"])
-            st.progress(sum(1 for step in project_steps if step["done"]) / 4)
+            st.markdown("#### 🧭 Маршрут проекта")
+            if booking:
+                saved_progress = get_project_progress(name, booking["id"])
+                submissions_for_roadmap = get_student_submissions(name)
+                has_submission = any(s["topic_id"] == booking["id"] for s in submissions_for_roadmap)
+                roadmap = [
+                    {"label": "Тема выбрана", "hint": "Тема уже забронирована", "done": True, "code": None},
+                ] + [
+                    {"label": label, "hint": hint, "done": bool(saved_progress.get(code, False)), "code": code}
+                    for code, label, hint in PROJECT_ROADMAP_STEPS
+                ] + [
+                    {"label": "Работа отправлена", "hint": "Отправьте файл на проверку", "done": has_submission, "code": None},
+                ]
+                completed = 0
+                for idx, step in enumerate(roadmap):
+                    if step["code"] is None:
+                        st.markdown(("✅ " if step["done"] else "⬜ ") + f"**{idx + 1}. {step['label']}**")
+                        st.caption(step["hint"])
+                    else:
+                        checked = st.checkbox(
+                            f"{idx + 1}. {step['label']}",
+                            value=step["done"],
+                            key=f"roadmap_{booking['id']}_{step['code']}",
+                            help=step["hint"],
+                        )
+                        if checked != step["done"]:
+                            ok, msg = set_project_step(name, booking["id"], step["code"], checked)
+                            if ok:
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                        st.caption(step["hint"])
+                    if step["done"]:
+                        completed += 1
+                st.progress(completed / len(roadmap))
+                st.caption(f"Выполнено этапов: {completed} из {len(roadmap)}")
+            else:
+                st.info("Маршрут появится после выбора темы.")
 
             class_progress = game.get_class_progress(st.session_state.get("student_class", ""))
             if class_progress["configured"]:
