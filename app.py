@@ -175,11 +175,10 @@ if role == "Ученик":
                                 ("Рекомендации", t.get("recommendations")), ("Критерии оценки", t.get("criteria")),
                             ]
                             if any(value for _, value in detail_parts):
-                                with st.expander("Подробнее о теме"):
+                                with st.container(border=True):
                                     for label, value in detail_parts:
                                         if value:
-                                            st.markdown(f"**{label}:**")
-                                            st.write(value)
+                                            st.markdown(f"**{label}:** {value}")
                         with c2:
                             if st.button("Забронировать", key=f"book_r{t.get('sheet_row', t['id'])}"):
                                 if not student_name:
