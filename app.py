@@ -432,7 +432,15 @@ else:
         stat_cols = st.columns(5)
         for col, label, value in zip(stat_cols, ["Темы", "Брони", "Ученики", "Работы", "Принято"], [teacher_stats["topics"], teacher_stats["booked_topics"], teacher_stats["students"], teacher_stats["submissions"], teacher_stats["accepted"]]):
             col.metric(label, value)
-        st.caption(f"На проверке: {teacher_stats['pending']} · На доработке: {teacher_stats['revision']}")
+        extra_dashboard = (
+            f" · Без выбранной темы (по численности классов): {teacher_stats['students_without_topic']}"
+            if teacher_stats.get("students_without_topic") is not None else ""
+        )
+        st.caption(
+            f"На проверке: {teacher_stats['pending']} · На доработке: {teacher_stats['revision']} · "
+            f"Забронировали, но ещё не сдали: {teacher_stats.get('booked_without_submission', 0)}"
+            + extra_dashboard
+        )
 
     tab_t1, tab_t2, tab_t3, tab_t4, tab_t5, tab_t6, tab_t7, tab_t8, tab_t9, tab_t10 = st.tabs([
         "Работы", "Темы", "Добавить темы", "Материалы", "Объявления", "Вопросы", "Значки", "Экспорт", "Лог", "Поиск",
