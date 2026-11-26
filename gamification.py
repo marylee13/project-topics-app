@@ -145,6 +145,11 @@ def get_teacher_stats():
     accepted = sum(1 for s in submissions if s.get("status") == "принято")
     revision = sum(1 for s in submissions if s.get("status") == "на доработке")
     pending = sum(1 for s in submissions if s.get("status") == "на проверке")
+    submitted_pairs = {(str(s.get("student_name", "")).strip(), str(s.get("topic_id", "")).strip()) for s in submissions}
+    booked_without_submission = sum(
+        1 for t in topics if t.get("is_booked") == 1 and t.get("booked_by")
+        and (str(t.get("booked_by", "")).strip(), str(t.get("id", "")).strip()) not in submitted_pairs
+    )
     configured_students = 0
     try:
         settings_ws, settings = _class_records()
@@ -163,6 +168,7 @@ def get_teacher_stats():
         "accepted": accepted,
         "revision": revision,
         "pending": pending,
+        "booked_without_submission": booked_without_submission,
         "configured_students": configured_students,
         "error": None,
     }
