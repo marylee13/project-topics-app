@@ -18,7 +18,8 @@ DRIVE_OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive"]
 TEACHER_PASSWORD = "marylee_13"
 
 HEADERS = {
-    "topics": ["id", "grade", "subject", "title", "product", "is_booked", "booked_by", "booked_at", "deadline"],
+    "topics": ["id", "grade", "subject", "title", "product", "is_booked", "booked_by", "booked_at", "deadline", "description", "goal", "expected_result", "recommendations", "criteria"],
+    "project_progress": ["id", "student_name", "topic_id", "step_code", "is_done", "updated_at"],
     "submissions": ["id", "topic_id", "student_name", "student_class", "filename",
                     "drive_file_id", "drive_link", "status", "teacher_comment", "submitted_at", "updated_at",
                     "status_history", "versions"],
@@ -331,11 +332,13 @@ def log_action(actor, action, details=""):
         pass
 
 
-def add_topic(grade, subject, title, product, deadline=""):
+def add_topic(grade, subject, title, product, deadline="", description="", goal="", expected_result="", recommendations="", criteria=""):
     ss = get_spreadsheet()
     ws = ensure_worksheet("topics")
+    _ensure_topic_detail_columns(ws)
     new_id = get_next_id(ws)
-    ws.append_row([new_id, grade, subject, title, product, 0, "", "", deadline or ""], value_input_option="USER_ENTERED")
+    ws.append_row([new_id, grade, subject, title, product, 0, "", "", deadline or "",
+                   description, goal, expected_result, recommendations, criteria], value_input_option="USER_ENTERED")
     try:
         log_action("учитель", "добавлена тема", f"id={new_id}, {grade}: {subject}: {title}")
     except Exception:
@@ -357,8 +360,9 @@ def add_topics_bulk(rows):
         return 0
     ss = get_spreadsheet()
     ws = ss.worksheet("topics")
+    _ensure_topic_detail_columns(ws)
     start_id = get_next_id(ws)
-    batch = [[start_id + i, r["grade"], r["subject"], r["title"], r["product"], 0, "", "", r["deadline"]] for i, r in enumerate(prepared)]
+    batch = [[start_id + i, r["grade"], r["subject"], r["title"], r["product"], 0, "", "", r["deadline"], "", "", "", "", ""] for i, r in enumerate(prepared)]
     for i in range(0, len(batch), 50):
         chunk = batch[i:i + 50]
         for attempt in range(5):
@@ -377,6 +381,19 @@ def add_topics_bulk(rows):
         pass
     get_topics_cached.clear()
     return len(batch)
+
+
+def _ensure_topic_detail_columns(ws):
+    """Add optional topic-card columns to older spreadsheets without changing existing data."""
+    headers = [str(h).strip() for h in ws.row_values(1)]
+    required = HEADERS["topics"]
+    missing = [h for h in required if h not in headers]
+    if missing:
+        start_col = len(headers) + 1
+        end_col = start_col + len(missing) - 1
+        ws.update(f"{rowcol_to_a1(1, start_col)}:{rowcol_to_a1(1, end_col)}",
+                  [missing], value_input_option="USER_ENTERED")
+        clear_sheet_read_cache()
 
 
 def _normalize_topic_row(r, row_index):
@@ -402,13 +419,17 @@ def _normalize_topic_row(r, row_index):
     return {"id": tid, "grade": str(r.get("grade") or r.get("Класс") or r.get("класс") or "").strip(),
             "subject": subject, "title": title, "product": str(r.get("product") or r.get("Продукт") or "").strip(),
             "is_booked": is_booked, "booked_by": str(r.get("booked_by") or "").strip(),
-            "booked_at": str(r.get("booked_at") or "").strip(), "deadline": str(r.get("deadline") or r.get("Дедлайн") or "").strip()}
+            "booked_at": str(r.get("booked_at") or "").strip(), "deadline": str(r.get("deadline") or r.get("Дедлайн") or "").strip(),
+            "description": str(r.get("description") or "").strip(), "goal": str(r.get("goal") or "").strip(),
+            "expected_result": str(r.get("expected_result") or "").strip(), "recommendations": str(r.get("recommendations") or "").strip(),
+            "criteria": str(r.get("criteria") or "").strip()}
 
 
 @st.cache_data(ttl=20, show_spinner=False)
 def get_topics_cached():
     ss = get_spreadsheet()
     ws = ensure_worksheet("topics")
+    _ensure_topic_detail_columns(ws)
     values = safe_get_all_values(ws)
     if not values:
         return []
@@ -577,17 +598,67 @@ def delete_topic(topic_id):
         get_topics_cached.clear()
 
 
-def update_topic(topic_id, grade, subject, title, product, deadline=""):
+def update_topic(topic_id, grade, subject, title, product, deadline="", description="", goal="", expected_result="", recommendations="", criteria=""):
     ss = get_spreadsheet()
     ws = ss.worksheet("topics")
+    _ensure_topic_detail_columns(ws)
     row = find_row_by_id(ws, topic_id)
     if row:
         vals = ws.row_values(row)
-        while len(vals) < 9:
+        while len(vals) < 14:
             vals.append("")
-        ws.update(f"B{row}:I{row}", [[grade, subject, title, product, vals[5], vals[6], vals[7], deadline or ""]], value_input_option="USER_ENTERED")
+        ws.update(f"B{row}:N{row}", [[grade, subject, title, product, vals[5], vals[6], vals[7], deadline or "",
+                                     description, goal, expected_result, recommendations, criteria]], value_input_option="USER_ENTERED")
         log_action("учитель", "изменена тема", f"topic_id={topic_id}")
         get_topics_cached.clear()
+
+
+PROJECT_ROADMAP_STEPS = [
+    ("plan", "План проекта", "Сформулируйте цель, задачи и план работы"),
+    ("research", "Исследование", "Соберите информацию, проведите опрос или эксперимент"),
+    ("product", "Создание продукта", "Подготовьте презентацию, макет, видео или другой продукт"),
+    ("defense", "Подготовка к защите", "Подготовьте короткое выступление и ответы на вопросы"),
+]
+
+
+def get_project_progress(student_name, topic_id):
+    student_name = (student_name or "").strip()
+    if not student_name or not topic_id:
+        return {}
+    try:
+        ws = ensure_worksheet("project_progress")
+        records = rows_to_records(safe_get_all_values(ws))
+    except Exception:
+        return {}
+    result = {}
+    for row in records:
+        if (str(row.get("student_name", "")).strip() == student_name
+                and _ids_equal(row.get("topic_id", ""), topic_id)):
+            result[str(row.get("step_code", "")).strip()] = str(row.get("is_done", "")).strip().lower() in ("1", "true", "да", "yes")
+    return result
+
+
+def set_project_step(student_name, topic_id, step_code, is_done):
+    student_name = (student_name or "").strip()
+    if not student_name or not topic_id or step_code not in {item[0] for item in PROJECT_ROADMAP_STEPS}:
+        return False, "Не удалось сохранить этап проекта"
+    ws = ensure_worksheet("project_progress")
+    records = rows_to_records(safe_get_all_values(ws, force_refresh=True))
+    row_num = None
+    for index, row in enumerate(records, start=2):
+        if (str(row.get("student_name", "")).strip() == student_name
+                and _ids_equal(row.get("topic_id", ""), topic_id)
+                and str(row.get("step_code", "")).strip() == step_code):
+            row_num = index
+            break
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    if row_num:
+        ws.update(f"E{row_num}:F{row_num}", [[1 if is_done else 0, now]], value_input_option="USER_ENTERED")
+    else:
+        ws.append_row([get_next_id(ws), student_name, topic_id, step_code, 1 if is_done else 0, now], value_input_option="USER_ENTERED")
+    clear_sheet_read_cache()
+    log_action(student_name, "этап проекта", f"{step_code}: {'выполнен' if is_done else 'снят'}")
+    return True, "Прогресс сохранён"
 
 
 def _guess_mime(filename, fallback="application/octet-stream"):

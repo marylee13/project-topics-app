@@ -10,6 +10,7 @@ from logic import (
     add_announcement, get_announcements, update_announcement, set_announcement_active, delete_announcement,
     get_student_achievements, get_badge_progress, get_student_points, BADGES,
     get_student_level, get_next_steps, teacher_award_badge, LEVELS,
+    PROJECT_ROADMAP_STEPS, get_project_progress, set_project_step,
 )
 
 CLASSES = ["8А", "8Б", "8В", "8Г", "8Д", "8Е"]
@@ -168,6 +169,16 @@ if role == "Ученик":
                             if t.get("product"): extra.append(f"Продукт: {t['product']}")
                             if t.get("deadline"): extra.append(f"Дедлайн: {t['deadline']}")
                             st.caption(" | ".join(extra))
+                            detail_parts = [
+                                ("Описание", t.get("description")), ("Цель", t.get("goal")),
+                                ("Ожидаемый результат", t.get("expected_result")),
+                                ("Рекомендации", t.get("recommendations")), ("Критерии оценки", t.get("criteria")),
+                            ]
+                            if any(value for _, value in detail_parts):
+                                with st.container():
+                                    for label, value in detail_parts:
+                                        if value:
+                                            st.markdown(f"**{label}:** {value}")
                         with c2:
                             if st.button("Забронировать", key=f"book_r{t.get('sheet_row', t['id'])}"):
                                 if not student_name:
@@ -252,14 +263,44 @@ if role == "Ученик":
                         else:
                             st.info(f"⬜ {p['icon']} {p['title']}")
 
-            st.markdown("#### 🧭 Прогресс проекта")
-            project_steps = game.get_project_steps(name)
-            step_cols = st.columns(4)
-            for idx, step in enumerate(project_steps):
-                with step_cols[idx]:
-                    st.markdown(("✅ " if step["done"] else "⬜ ") + f"**{idx + 1}. {step['label']}**")
-                    st.caption("Выполнено" if step["done"] else step["hint"])
-            st.progress(sum(1 for step in project_steps if step["done"]) / 4)
+            st.markdown("#### 🧭 Маршрут проекта")
+            if booking:
+                saved_progress = get_project_progress(name, booking["id"])
+                submissions_for_roadmap = get_student_submissions(name)
+                has_submission = any(s["topic_id"] == booking["id"] for s in submissions_for_roadmap)
+                roadmap = [
+                    {"label": "Тема выбрана", "hint": "Тема уже забронирована", "done": True, "code": None},
+                ] + [
+                    {"label": label, "hint": hint, "done": bool(saved_progress.get(code, False)), "code": code}
+                    for code, label, hint in PROJECT_ROADMAP_STEPS
+                ] + [
+                    {"label": "Работа отправлена", "hint": "Отправьте файл на проверку", "done": has_submission, "code": None},
+                ]
+                completed = 0
+                for idx, step in enumerate(roadmap):
+                    if step["code"] is None:
+                        st.markdown(("✅ " if step["done"] else "⬜ ") + f"**{idx + 1}. {step['label']}**")
+                        st.caption(step["hint"])
+                    else:
+                        checked = st.checkbox(
+                            f"{idx + 1}. {step['label']}",
+                            value=step["done"],
+                            key=f"roadmap_{booking['id']}_{step['code']}",
+                            help=step["hint"],
+                        )
+                        if checked != step["done"]:
+                            ok, msg = set_project_step(name, booking["id"], step["code"], checked)
+                            if ok:
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                        st.caption(step["hint"])
+                    if step["done"]:
+                        completed += 1
+                st.progress(completed / len(roadmap))
+                st.caption(f"Выполнено этапов: {completed} из {len(roadmap)}")
+            else:
+                st.info("Маршрут появится после выбора темы.")
 
             class_progress = game.get_class_progress(st.session_state.get("student_class", ""))
             if class_progress["configured"]:
@@ -277,6 +318,18 @@ if role == "Ученик":
             else:
                 st.caption("Рейтинг появится, когда ученики начнут получать достижения.")
 
+            st.markdown("#### 🔔 Последнее сообщение о проверке")
+            latest_submissions = get_student_submissions(name)
+            if latest_submissions:
+                latest = latest_submissions[0]
+                if latest["status"] == "принято":
+                    st.success(f"Работа «{latest['title']}» принята учителем. Отличная работа!")
+                elif latest["status"] == "на доработке":
+                    st.warning(f"Работа «{latest['title']}» возвращена на доработку. {latest.get('teacher_comment') or 'Откройте историю ниже, чтобы посмотреть замечания.'}")
+                elif latest["status"] == "на проверке":
+                    st.info(f"Работа «{latest['title']}» ожидает проверки учителем.")
+            else:
+                st.caption("После отправки работы здесь появится её статус.")
             st.markdown("#### Работы и история статусов")
             subs = get_student_submissions(name)
             if not subs:
@@ -378,7 +431,15 @@ else:
         stat_cols = st.columns(5)
         for col, label, value in zip(stat_cols, ["Темы", "Брони", "Ученики", "Работы", "Принято"], [teacher_stats["topics"], teacher_stats["booked_topics"], teacher_stats["students"], teacher_stats["submissions"], teacher_stats["accepted"]]):
             col.metric(label, value)
-        st.caption(f"На проверке: {teacher_stats['pending']} · На доработке: {teacher_stats['revision']}")
+        extra_dashboard = (
+            f" · Без выбранной темы (по численности классов): {teacher_stats['students_without_topic']}"
+            if teacher_stats.get("students_without_topic") is not None else ""
+        )
+        st.caption(
+            f"На проверке: {teacher_stats['pending']} · На доработке: {teacher_stats['revision']} · "
+            f"Забронировали, но ещё не сдали: {teacher_stats.get('booked_without_submission', 0)}"
+            + extra_dashboard
+        )
 
     tab_t1, tab_t2, tab_t3, tab_t4, tab_t5, tab_t6, tab_t7, tab_t8, tab_t9, tab_t10 = st.tabs([
         "Работы", "Темы", "Добавить темы", "Материалы", "Объявления", "Вопросы", "Значки", "Экспорт", "Лог", "Поиск",
@@ -474,8 +535,13 @@ else:
                     et = st.text_input("Тема", value=t["title"], key=f"et_{t['id']}")
                     ep = st.text_input("Продукт", value=t["product"] or "", key=f"ep_{t['id']}")
                     ed = st.text_input("Дедлайн", value=t["deadline"] or "", key=f"ed_{t['id']}")
+                    e_desc = st.text_area("Описание", value=t.get("description", ""), key=f"desc_{t['id']}")
+                    e_goal = st.text_area("Цель проекта", value=t.get("goal", ""), key=f"goal_{t['id']}")
+                    e_result = st.text_area("Ожидаемый результат", value=t.get("expected_result", ""), key=f"result_{t['id']}")
+                    e_recommend = st.text_area("Рекомендации", value=t.get("recommendations", ""), key=f"recommend_{t['id']}")
+                    e_criteria = st.text_area("Критерии оценки", value=t.get("criteria", ""), key=f"criteria_{t['id']}")
                     if st.form_submit_button("💾 Сохранить"):
-                        update_topic(t["id"], eg, es, et, ep, ed); st.rerun()
+                        update_topic(t["id"], eg, es, et, ep, ed, e_desc, e_goal, e_result, e_recommend, e_criteria); st.rerun()
 
     with tab_t3:
         st.subheader("Добавить тему")
@@ -485,9 +551,14 @@ else:
             nt = st.text_input("Тема")
             np_ = st.text_input("Продукт")
             nd = st.text_input("Дедлайн")
+            n_desc = st.text_area("Описание темы")
+            n_goal = st.text_area("Цель проекта")
+            n_result = st.text_area("Ожидаемый результат")
+            n_recommend = st.text_area("Рекомендации")
+            n_criteria = st.text_area("Критерии оценки")
             if st.form_submit_button("Добавить", type="primary"):
                 if ns.strip() and nt.strip():
-                    add_topic(ng, ns.strip(), nt.strip(), np_.strip(), nd.strip())
+                    add_topic(ng, ns.strip(), nt.strip(), np_.strip(), nd.strip(), n_desc, n_goal, n_result, n_recommend, n_criteria)
                     st.success("Добавлено"); st.rerun()
         bulk_text = st.text_area("Массово (класс;предмет;тема;продукт;дедлайн)", height=120)
         if st.button("Загрузить пакет"):
