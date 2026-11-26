@@ -10,6 +10,7 @@ from logic import (
     add_announcement, get_announcements, update_announcement, set_announcement_active, delete_announcement,
     get_student_achievements, get_badge_progress, get_student_points, BADGES,
     get_student_level, get_next_steps, teacher_award_badge, LEVELS,
+    PROJECT_ROADMAP_STEPS, get_project_progress, set_project_step,
 )
 
 CLASSES = ["8А", "8Б", "8В", "8Г", "8Д", "8Е"]
@@ -277,6 +278,18 @@ if role == "Ученик":
             else:
                 st.caption("Рейтинг появится, когда ученики начнут получать достижения.")
 
+            st.markdown("#### 🔔 Последнее сообщение о проверке")
+            latest_submissions = get_student_submissions(name)
+            if latest_submissions:
+                latest = latest_submissions[0]
+                if latest["status"] == "принято":
+                    st.success(f"Работа «{latest['title']}» принята учителем. Отличная работа!")
+                elif latest["status"] == "на доработке":
+                    st.warning(f"Работа «{latest['title']}» возвращена на доработку. {latest.get('teacher_comment') or 'Откройте историю ниже, чтобы посмотреть замечания.'}")
+                elif latest["status"] == "на проверке":
+                    st.info(f"Работа «{latest['title']}» ожидает проверки учителем.")
+            else:
+                st.caption("После отправки работы здесь появится её статус.")
             st.markdown("#### Работы и история статусов")
             subs = get_student_submissions(name)
             if not subs:
