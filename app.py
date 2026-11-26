@@ -544,9 +544,14 @@ else:
             nt = st.text_input("Тема")
             np_ = st.text_input("Продукт")
             nd = st.text_input("Дедлайн")
+            n_desc = st.text_area("Описание темы")
+            n_goal = st.text_area("Цель проекта")
+            n_result = st.text_area("Ожидаемый результат")
+            n_recommend = st.text_area("Рекомендации")
+            n_criteria = st.text_area("Критерии оценки")
             if st.form_submit_button("Добавить", type="primary"):
                 if ns.strip() and nt.strip():
-                    add_topic(ng, ns.strip(), nt.strip(), np_.strip(), nd.strip())
+                    add_topic(ng, ns.strip(), nt.strip(), np_.strip(), nd.strip(), n_desc, n_goal, n_result, n_recommend, n_criteria)
                     st.success("Добавлено"); st.rerun()
         bulk_text = st.text_area("Массово (класс;предмет;тема;продукт;дедлайн)", height=120)
         if st.button("Загрузить пакет"):
