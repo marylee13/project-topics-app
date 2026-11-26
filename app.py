@@ -175,7 +175,7 @@ if role == "Ученик":
                                 ("Рекомендации", t.get("recommendations")), ("Критерии оценки", t.get("criteria")),
                             ]
                             if any(value for _, value in detail_parts):
-                                with st.container(border=True):
+                                with st.container():
                                     for label, value in detail_parts:
                                         if value:
                                             st.markdown(f"**{label}:** {value}")
