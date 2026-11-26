@@ -384,16 +384,32 @@ def add_topics_bulk(rows):
 
 
 def _ensure_topic_detail_columns(ws):
-    """Add optional topic-card columns to older spreadsheets without changing existing data."""
-    headers = [str(h).strip() for h in ws.row_values(1)]
-    required = HEADERS["topics"]
-    missing = [h for h in required if h not in headers]
-    if missing:
+    """Safely add optional topic-card columns to older spreadsheets."""
+    try:
+        headers = [str(h).strip() for h in ws.row_values(1)]
+        required = HEADERS["topics"]
+        missing = [h for h in required if h not in headers]
+        if not missing:
+            return True
+
+        # A Sheets values.update request cannot write beyond the worksheet grid.
         start_col = len(headers) + 1
         end_col = start_col + len(missing) - 1
-        ws.update(f"{rowcol_to_a1(1, start_col)}:{rowcol_to_a1(1, end_col)}",
-                  [missing], value_input_option="USER_ENTERED")
+        if ws.col_count < end_col:
+            ws.add_cols(end_col - ws.col_count)
+
+        ws.update(
+            f"{rowcol_to_a1(1, start_col)}:{rowcol_to_a1(1, end_col)}",
+            [missing],
+            value_input_option="USER_ENTERED",
+        )
         clear_sheet_read_cache()
+        return True
+    except Exception:
+        # Topic descriptions are optional; don't make the entire app unavailable
+        # if Google temporarily rejects this migration request.
+        logging.exception("Could not add optional topic detail columns")
+        return False
 
 
 def _normalize_topic_row(r, row_index):
