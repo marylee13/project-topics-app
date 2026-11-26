@@ -119,11 +119,11 @@ if role == "Ученик":
                 if m.get("drive_link"):
                     st.markdown(f"[⬇️ Открыть / скачать]({m['drive_link']})")
 
-    tab1, tab_free, tab2, tab3, tab4 = st.tabs(["1. Выбрать тему", "Свободные темы", "2. Сдать работу", "3. Мой кабинет", "4. Вопрос учителю"])
+    tab1, tab2, tab3, tab4 = st.tabs(["1. Выбрать тему", "2. Сдать работу", "3. Мой кабинет", "4. Вопрос учителю"])
 
     with tab1:
-        st.subheader("Список тем")
-        st.caption("🟢 свободно · 🔴 занята · темы общие для 8А–8Е")
+        st.subheader("🟢 Свободные темы")
+        st.caption("Здесь отображаются только темы, которые ещё никто не забронировал. Темы общие для 8А–8Е.")
         col_s, col_r = st.columns([4, 1])
         with col_s:
             search_q = st.text_input("Поиск", placeholder="тема или предмет")
@@ -133,15 +133,15 @@ if role == "Ученик":
                 get_topics_cached.clear(); st.rerun()
         all_for_count = get_topics_cached()
         free_count = sum(1 for t in all_for_count if t["is_booked"] != 1)
-        st.caption(f"В базе: **{len(all_for_count)}** · 🟢 **{free_count}** · 🔴 **{len(all_for_count) - free_count}**")
+        st.caption(f"Всего свободных тем: **{free_count}**")
         sort_mode = st.selectbox(
             "Показывать темы",
             ["По предмету", "По алфавиту"],
             key="student_topic_sort",
         )
-        topics = get_topics(only_free=False, search=search_q or None)
+        topics = get_topics(only_free=True, search=search_q.strip() or None)
         if not topics:
-            st.warning("Тем пока нет.") if not all_for_count else st.info("По запросу ничего не найдено.")
+            st.info("Свободных тем по этому запросу нет.")
         else:
             if sort_mode == "По алфавиту":
                 display_groups = [("Все темы (А–Я)", sorted(
@@ -157,81 +157,19 @@ if role == "Ученик":
                 ]
 
             for subj, items in display_groups:
-                free_in = sum(1 for t in items if t["is_booked"] != 1)
                 heading = subj if sort_mode == "По алфавиту" else f"📌 {subj}"
-                with st.expander(f"{heading} (🟢 {free_in} / {len(items)})", expanded=True):
+                with st.expander(f"{heading} ({len(items)})", expanded=True):
                     for t in items:
-                        is_busy = t["is_booked"] == 1
-                        mark = "🔴" if is_busy else "🟢"
+                        mark = "🟢"
                         c1, c2 = st.columns([4, 1])
                         with c1:
                             st.markdown(f"{mark} **{t['title']}**")
-                            extra = [f"Занята: {t['booked_by'] or '—'}" if is_busy else "Свободна"]
-                            if t.get("product"): extra.append(f"Продукт: {t['product']}")
-                            if t.get("deadline"): extra.append(f"Дедлайн: {t['deadline']}")
-                            st.caption(" | ".join(extra))
-                        with c2:
-                            if is_busy:
-                                st.caption("занята")
-                            elif st.button("Забронировать", key=f"book_r{t.get('sheet_row', t['id'])}"):
-                                if not student_name:
-                                    st.warning("Сначала введите ФИО")
-                                else:
-                                    ok, msg = _book(t, student_name, student_class)
-                                    if ok: st.success(msg); st.rerun()
-                                    else: st.error(msg)
-
-    with tab_free:
-        st.subheader("🟢 Свободные темы")
-        st.caption("Здесь отображаются только темы, которые ещё никто не забронировал.")
-        free_col1, free_col2 = st.columns([4, 1])
-        with free_col1:
-            free_search = st.text_input("Поиск свободной темы", placeholder="Название темы или предмет", key="free_topic_search")
-        with free_col2:
-            st.write(""); st.write("")
-            if st.button("🔄 Обновить", key="refresh_free_topics"):
-                get_topics_cached.clear(); st.rerun()
-
-        free_sort = st.selectbox(
-            "Сортировать",
-            ["По предмету", "По алфавиту"],
-            key="free_topic_sort",
-        )
-        try:
-            free_topics = get_topics(only_free=True, search=free_search.strip() or None)
-        except Exception as e:
-            st.warning(f"Не удалось загрузить свободные темы: {str(e)[:160]}")
-            free_topics = []
-
-        if not free_topics:
-            st.info("Свободных тем по этому запросу нет.")
-        else:
-            if free_sort == "По алфавиту":
-                free_groups = [("Все свободные темы (А–Я)", sorted(
-                    free_topics, key=lambda t: str(t.get("title") or "").casefold()
-                ))]
-            else:
-                free_subjects = {}
-                for t in free_topics:
-                    free_subjects.setdefault(t.get("subject") or "Без предмета", []).append(t)
-                free_groups = [
-                    (subject, sorted(items, key=lambda t: str(t.get("title") or "").casefold()))
-                    for subject, items in sorted(free_subjects.items(), key=lambda pair: pair[0].casefold())
-                ]
-
-            st.caption(f"Найдено свободных тем: **{len(free_topics)}**")
-            for group_name, items in free_groups:
-                with st.expander(f"📌 {group_name} ({len(items)})", expanded=True):
-                    for t in items:
-                        c1, c2 = st.columns([4, 1])
-                        with c1:
-                            st.markdown(f"🟢 **{t['title']}**")
                             extra = [t.get("subject") or "Без предмета"]
                             if t.get("product"): extra.append(f"Продукт: {t['product']}")
                             if t.get("deadline"): extra.append(f"Дедлайн: {t['deadline']}")
                             st.caption(" | ".join(extra))
                         with c2:
-                            if st.button("Забронировать", key=f"book_free_{t.get('sheet_row', t['id'])}"):
+                            if st.button("Забронировать", key=f"book_r{t.get('sheet_row', t['id'])}"):
                                 if not student_name:
                                     st.warning("Сначала введите ФИО")
                                 else:
