@@ -134,16 +134,32 @@ if role == "Ученик":
         all_for_count = get_topics_cached()
         free_count = sum(1 for t in all_for_count if t["is_booked"] != 1)
         st.caption(f"В базе: **{len(all_for_count)}** · 🟢 **{free_count}** · 🔴 **{len(all_for_count) - free_count}**")
+        sort_mode = st.selectbox(
+            "Показывать темы",
+            ["По предмету", "По алфавиту"],
+            key="student_topic_sort",
+        )
         topics = get_topics(only_free=False, search=search_q or None)
         if not topics:
             st.warning("Тем пока нет.") if not all_for_count else st.info("По запросу ничего не найдено.")
         else:
-            subjects = {}
-            for t in topics:
-                subjects.setdefault(t["subject"] or "Без предмета", []).append(t)
-            for subj, items in subjects.items():
+            if sort_mode == "По алфавиту":
+                display_groups = [("Все темы (А–Я)", sorted(
+                    topics, key=lambda t: str(t.get("title") or "").casefold()
+                ))]
+            else:
+                subjects = {}
+                for t in topics:
+                    subjects.setdefault(t["subject"] or "Без предмета", []).append(t)
+                display_groups = [
+                    (subj, sorted(items, key=lambda t: str(t.get("title") or "").casefold()))
+                    for subj, items in sorted(subjects.items(), key=lambda pair: pair[0].casefold())
+                ]
+
+            for subj, items in display_groups:
                 free_in = sum(1 for t in items if t["is_booked"] != 1)
-                with st.expander(f"📌 {subj} (🟢 {free_in} / {len(items)})", expanded=True):
+                heading = subj if sort_mode == "По алфавиту" else f"📌 {subj}"
+                with st.expander(f"{heading} (🟢 {free_in} / {len(items)})", expanded=True):
                     for t in items:
                         is_busy = t["is_booked"] == 1
                         mark = "🔴" if is_busy else "🟢"
